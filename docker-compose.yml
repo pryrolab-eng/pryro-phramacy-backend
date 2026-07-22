@@ -1,0 +1,49 @@
+# Local dev stack
+# Start all:     docker compose up -d
+# Start one:     docker compose up -d redis
+# Stop all:      docker compose down
+# ClickHouse UI: http://localhost:8123/play
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12
+    container_name: pryrox-clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: pryrox_analytics
+      CLICKHOUSE_USER: pryrox
+      CLICKHOUSE_PASSWORD: pryrox_dev
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - pryrox_clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse/init:/docker-entrypoint-initdb.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: pryrox-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - pryrox_redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pryrox_clickhouse_data:
+  pryrox_redis_data:
