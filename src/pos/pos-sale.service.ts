@@ -519,9 +519,22 @@ export class PosSaleService {
       console.error("loyalty award:", error);
     }
 
-    // TODO: Port Redis invalidation, sale notifications, EBM submission,
-    // integration webhooks, and ClickHouse synchronization once those
-    // infrastructure adapters are available in the Nest application.
+    // Write sale.completed notification to outbox — dispatched within 5 min by cron
+    await this.prisma.notification_outbox.create({
+      data: {
+        event_type: "sale.completed",
+        pharmacy_id: pharmacyId,
+        user_id: userId,
+        payload: {
+          receiptNumber,
+          total: saleTotal,
+          paymentMethod: dbPaymentMethod,
+          branchId,
+          itemCount: saleItems.length,
+        },
+      },
+    });
+
     await this.audit.writeAuditLog({
       pharmacyId,
       userId,

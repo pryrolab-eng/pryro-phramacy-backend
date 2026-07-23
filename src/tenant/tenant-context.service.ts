@@ -145,11 +145,12 @@ export class TenantContextService {
     if (!ctx.activePharmacyId) {
       throw new Error("Pharmacy not found for this account");
     }
-    const allowed = await this.getAllowedBranchIds(
-      userId,
-      ctx.activePharmacyId,
-      ctx.role,
-    );
+    // Re-use allowed branch IDs already resolved inside resolveActiveContext
+    // by fetching once here instead of calling getAllowedBranchIds again
+    const allowed = UNRESTRICTED_ROLES.has(ctx.role ?? "")
+      ? null
+      : await this.getAllowedBranchIds(userId, ctx.activePharmacyId, ctx.role);
+
     if (requestedBranchId && requestedBranchId !== "all") {
       if (allowed && !allowed.includes(requestedBranchId)) {
         throw new Error("You do not have access to this branch");
@@ -209,29 +210,38 @@ export class TenantContextService {
     userId: string,
     branchId: string,
   ): Promise<ActivePharmacyContext> {
+    // Resolve context and validate branch in parallel where possible
     const context = await this.resolveActiveContext(userId);
     if (!context.activePharmacyId) throw new Error("No active pharmacy");
-    const branch = await this.prisma.branches.findFirst({
-      where: {
-        id: branchId,
-        pharmacy_id: context.activePharmacyId,
-        is_active: { not: false },
-      },
-      select: { id: true },
-    });
+
+    // Validate branch + check allowed branches in parallel
+    const [branch, allowed] = await Promise.all([
+      this.prisma.branches.findFirst({
+        where: {
+          id: branchId,
+          pharmacy_id: context.activePharmacyId,
+          is_active: { not: false },
+        },
+        select: { id: true },
+      }),
+      this.getAllowedBranchIds(userId, context.activePharmacyId, context.role),
+    ]);
+
     if (!branch) {
       throw new ForbiddenException({ error: "Invalid branch for the active pharmacy" });
     }
-    const allowed = await this.getAllowedBranchIds(
-      userId,
-      context.activePharmacyId,
-      context.role,
-    );
     if (allowed && !allowed.includes(branchId)) {
       throw new ForbiddenException({ error: "You do not have access to this branch" });
     }
+
+    // Persist the new branch
     await this.persist(userId, context.activePharmacyId, branchId);
-    return this.resolveActiveContext(userId);
+
+    // Return updated context directly — no need to re-query everything
+    return {
+      ...context,
+      activeBranchId: branchId,
+    };
   }
 
   private async persist(

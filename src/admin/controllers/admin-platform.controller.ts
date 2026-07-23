@@ -30,6 +30,97 @@ export class AdminPlatformController {
     private readonly audit: AuditService,
   ) {}
 
+  // --- User management ---
+
+  @Post("users")
+  @ApiOperation({ summary: "Create a new auth user (staff invite)" })
+  async createUser(@CurrentUser() _user: AuthUser, @Body() body: { email: string; password: string; fullName?: string }, @Req() req: Request) {
+    try {
+      const result = await this.admin.createAuthUser(body.email, body.password, body.fullName);
+      await this.auditWrite(_user.id, null, "INSERT", "auth_users", result.user.id, null, body, req);
+      return result;
+    } catch (error: unknown) {
+      const err = error as { status?: number; error?: string };
+      throw new HttpException({ error: err.error ?? "Failed to create user" }, err.status ?? 500);
+    }
+  }
+
+  @Get("users/:id")
+  @ApiOperation({ summary: "Get auth user by ID" })
+  async getUser(@Param("id") id: string) {
+    try {
+      const user = await this.admin.getAuthUserById(id);
+      if (!user) throw new HttpException({ error: "User not found" }, 404);
+      return user;
+    } catch (error: unknown) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException({ error: "Failed to get user" }, 500);
+    }
+  }
+
+  @Put("users/:id/password")
+  @ApiOperation({ summary: "Update auth user password" })
+  async updateUserPassword(@CurrentUser() _user: AuthUser, @Param("id") id: string, @Body() body: { password: string }, @Req() req: Request) {
+    try {
+      await this.admin.updateAuthUserPassword(id, body.password);
+      await this.auditWrite(_user.id, null, "UPDATE", "auth_users", id, null, { securityEvent: "password_updated_by_admin" }, req);
+      return { success: true };
+    } catch {
+      throw new HttpException({ error: "Failed to update password" }, 500);
+    }
+  }
+
+  @Put("users/:id/email")
+  @ApiOperation({ summary: "Update auth user email" })
+  async updateUserEmail(@CurrentUser() _user: AuthUser, @Param("id") id: string, @Body() body: { email: string }, @Req() req: Request) {
+    try {
+      await this.admin.updateAuthUserEmail(id, body.email);
+      await this.auditWrite(_user.id, null, "UPDATE", "auth_users", id, null, { securityEvent: "email_updated_by_admin" }, req);
+      return { success: true };
+    } catch {
+      throw new HttpException({ error: "Failed to update email" }, 500);
+    }
+  }
+
+  @Put("users/:id/metadata")
+  @ApiOperation({ summary: "Update auth user metadata" })
+  async updateUserMetadata(@CurrentUser() _user: AuthUser, @Param("id") id: string, @Body() body: Record<string, unknown>, @Req() req: Request) {
+    try {
+      await this.admin.updateAuthUserMetadata(id, body);
+      await this.auditWrite(_user.id, null, "UPDATE", "auth_users", id, null, { securityEvent: "metadata_updated_by_admin" }, req);
+      return { success: true };
+    } catch {
+      throw new HttpException({ error: "Failed to update metadata" }, 500);
+    }
+  }
+
+  @Delete("users/:id")
+  @ApiOperation({ summary: "Delete auth user" })
+  async deleteUser(@CurrentUser() _user: AuthUser, @Param("id") id: string, @Req() req: Request) {
+    try {
+      await this.admin.deleteAuthUser(id);
+      await this.auditWrite(_user.id, null, "DELETE", "auth_users", id, null, null, req);
+      return { success: true };
+    } catch {
+      throw new HttpException({ error: "Failed to delete user" }, 500);
+    }
+  }
+
+  // --- API key resolution (for frontend middleware) ---
+
+  @Post("api-keys/resolve")
+  @ApiOperation({ summary: "Resolve a platform API key by raw token (for frontend middleware)" })
+  async resolveApiKey(@Body() body: { token: string }) {
+    try {
+      const key = await this.admin.resolveApiKeyByToken(body.token);
+      if (!key) throw new HttpException({ error: "Invalid or expired API key" }, 404);
+      return key;
+    } catch (error: unknown) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException({ error: "Failed to resolve API key" }, 500);
+    }
+  }
+
   // --- System settings ---
 
   @Get("system-settings")

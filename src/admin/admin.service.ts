@@ -89,6 +89,16 @@ export class AdminService {
     await this.prisma.auth_users.delete({ where: { id: userId } }).catch(() => {});
   }
 
+  async getAuthUserById(userId: string): Promise<{ id: string; email: string | null; user_metadata: Record<string, unknown> } | null> {
+    const row = await this.prisma.auth_users.findUnique({ where: { id: userId }, select: { id: true, email: true, raw_user_meta_data: true } });
+    if (!row) return null;
+    return { id: row.id, email: row.email, user_metadata: (row.raw_user_meta_data as Record<string, unknown>) ?? {} };
+  }
+
+  async updateAuthUserMetadata(userId: string, metadata: Record<string, unknown>): Promise<void> {
+    await this.prisma.auth_users.update({ where: { id: userId }, data: { raw_user_meta_data: metadata as Prisma.InputJsonValue, updated_at: new Date() } });
+  }
+
   // --- Pharmacy management ---
 
   async listPharmacies() {
@@ -820,6 +830,32 @@ export class AdminService {
   }
 
   // --- API keys ---
+
+  async resolveApiKeyByToken(token: string): Promise<{ id: string; name: string; permissions: string[] } | null> {
+    if (!token || token.length < 8) return null;
+    const hash = crypto.createHash("sha256").update(token, "utf-8").digest("hex");
+    const prefixed = `sha256:${hash}`;
+
+    const row = await this.prisma.api_keys.findFirst({
+      where: {
+        pharmacy_id: null,
+        is_active: true,
+        OR: [{ key_hash: prefixed }, { key_hash: token }],
+        AND: [{ OR: [{ expires_at: null }, { expires_at: { gt: new Date() } }] }],
+      },
+      select: { id: true, name: true, key_hash: true, permissions: true },
+    });
+
+    if (!row) return null;
+
+    if (!row.key_hash.startsWith("sha256:")) {
+      await this.prisma.api_keys.update({ where: { id: row.id }, data: { key_hash: prefixed, last_used_at: new Date() } }).catch(() => undefined);
+    } else {
+      await this.prisma.api_keys.update({ where: { id: row.id }, data: { last_used_at: new Date() } }).catch(() => undefined);
+    }
+
+    return { id: row.id, name: row.name, permissions: (row.permissions ?? []) as string[] };
+  }
 
   async listApiKeys() {
     return this.prisma.api_keys.findMany({ orderBy: { created_at: "desc" } });

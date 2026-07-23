@@ -76,3 +76,25 @@ export class SignInResponseDto {
   @ApiProperty({ required: false }) error?: string;
 }
 
+export class SignUpDto {
+  @ApiProperty() @IsEmail() email!: string;
+  @ApiProperty() @IsString() @MinLength(8) password!: string;
+  @ApiProperty() @IsString() fullName!: string;
+}
+
+export class SignUpResponseDto {
+  @ApiProperty() success!: boolean;
+  @ApiProperty({ required: false }) userId?: string;
+  @ApiProperty({ required: false }) error?: string;
+}
+
+export class ResetPasswordDto {
+  @ApiProperty() @IsString() token!: string;
+  @ApiProperty() @IsString() @MinLength(8) password!: string;
+}
+
+export class ResetPasswordResponseDto {
+  @ApiProperty() success!: boolean;
+  @ApiProperty({ required: false }) error?: string;
+}
+

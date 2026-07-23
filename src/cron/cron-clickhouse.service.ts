@@ -67,19 +67,48 @@ export class CronClickhouseService {
 
         const salesValues = rows
           .filter((r) => r.pharmacy_id && r.created_at)
-          .map((r) => ({
-            sale_id: r.id,
-            pharmacy_id: r.pharmacy_id!,
-            branch_id: r.branch_id ?? "00000000-0000-0000-0000-000000000000",
-            created_at: r.created_at!.toISOString().replace("T", " ").replace("Z", ""),
-            total_amount: Number(r.total_amount ?? 0).toFixed(2),
-            payment_method: r.payment_method ?? "cash",
-            status: r.status ?? "completed",
-          }));
+          .map((r) => {
+            const total = Number(r.total_amount ?? 0);
+            const insurance = Number(r.insurance_amount ?? 0);
+            return {
+              sale_id: r.id,
+              pharmacy_id: r.pharmacy_id!,
+              branch_id: r.branch_id ?? "00000000-0000-0000-0000-000000000000",
+              created_at: r.created_at!.toISOString().replace("T", " ").replace("Z", ""),
+              total_amount: total.toFixed(2),
+              insurance_amount: insurance.toFixed(2),
+              customer_amount: Math.max(0, total - insurance).toFixed(2),
+              payment_method: r.payment_method ?? "cash",
+              status: r.status ?? "completed",
+            };
+          });
 
         if (salesValues.length > 0) {
           await ch.insert({ table: `${database}.sales_fact`, values: salesValues, format: "JSONEachRow" });
           salesCount += salesValues.length;
+        }
+
+        // Sync sale items for category analytics
+        const itemValues = rows.flatMap((r) =>
+          r.sale_items
+            .filter((item) => item.id && r.pharmacy_id && r.created_at)
+            .map((item) => ({
+              sale_item_id: item.id,
+              sale_id: r.id,
+              pharmacy_id: r.pharmacy_id!,
+              branch_id: r.branch_id ?? "00000000-0000-0000-0000-000000000000",
+              sold_at: r.created_at!.toISOString().replace("T", " ").replace("Z", ""),
+              medication_name: item.medication_name ?? "Unknown",
+              category: item.inventory?.medications?.category ?? "general",
+              quantity: item.quantity ?? 1,
+              unit_price: Number(item.unit_price ?? 0).toFixed(2),
+              total_price: Number(item.total_price ?? 0).toFixed(2),
+            }))
+        );
+
+        if (itemValues.length > 0) {
+          await ch.insert({ table: `${database}.sale_items_fact`, values: itemValues, format: "JSONEachRow" });
+          itemsCount += itemValues.length;
         }
 
         const last = rows[rows.length - 1]!;

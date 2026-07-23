@@ -11,8 +11,8 @@ export class CronNotificationsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Every 5 minutes — dispatch pending notification outbox rows. */
-  @Cron("*/5 * * * *", { name: "notification-dispatch" })
+  /** Every 2 minutes — dispatch pending notification outbox rows. */
+  @Cron("*/2 * * * *", { name: "notification-dispatch" })
   async notificationDispatch(): Promise<void> {
     try {
       const result = await this.runNotificationDispatch();

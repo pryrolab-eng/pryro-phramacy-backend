@@ -403,6 +403,31 @@ export class AuthService {
     return { success: true, provider: "nodemailer", message: "Check your email for a password reset link." };
   }
 
+  // --- Reset password (token-based) ---
+
+  async resetPassword(token: string, password: string): Promise<{ success: boolean; error?: string }> {
+    if (password.length < 8) {
+      return { success: false, error: "Password must be at least 8 characters." };
+    }
+
+    const payload = await this.authTokens.verifyPasswordResetToken(token);
+    if (!payload) {
+      return { success: false, error: "Your reset link expired or is invalid. Request a new one from Forgot password." };
+    }
+
+    const hash = await bcrypt.hash(password.trim(), 10);
+    await this.prisma.auth_users.update({
+      where: { id: payload.userId },
+      data: { encrypted_password: hash, updated_at: new Date() },
+    });
+
+    await this.prisma.app_sessions.deleteMany({
+      where: { user_id: payload.userId },
+    });
+
+    return { success: true };
+  }
+
   // --- Resend confirmation ---
 
   async resendConfirmation(email: string) {
@@ -438,6 +463,64 @@ export class AuthService {
     });
     const meta = (row?.raw_user_meta_data as Record<string, unknown>) ?? {};
     return meta.must_change_password === true;
+  }
+
+  async signUp(email: string, password: string, fullName: string): Promise<{ success: boolean; userId?: string; error?: string }> {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !password || !fullName) {
+      return { success: false, error: "Email, password, and full name are required." };
+    }
+    if (password.length < 8) {
+      return { success: false, error: "Password must be at least 8 characters." };
+    }
+
+    const existing = await this.prisma.auth_users.findFirst({
+      where: { email: normalizedEmail },
+      select: { id: true },
+    });
+    if (existing) {
+      return { success: false, error: "An account with this email already exists." };
+    }
+
+    const hash = await bcrypt.hash(password.trim(), 10);
+    const now = new Date();
+    const userId = crypto.randomUUID();
+
+    await this.prisma.auth_users.create({
+      data: {
+        id: userId,
+        email: normalizedEmail,
+        encrypted_password: hash,
+        email_confirmed_at: null,
+        raw_user_meta_data: { full_name: fullName } as never,
+        raw_app_meta_data: { provider: "email", providers: ["email"] } as never,
+        created_at: now,
+        updated_at: now,
+      },
+    });
+
+    await this.prisma.public_users.create({
+      data: {
+        id: userId,
+        email: normalizedEmail,
+        full_name: fullName,
+        token_identifier: normalizedEmail,
+        created_at: now,
+      },
+    });
+
+    const confirmToken = await this.authTokens.signEmailConfirmToken(userId, normalizedEmail);
+    const appUrl = this.authTokens.getAppUrl();
+    const confirmLink = `${appUrl}/api/auth/confirm-email?token=${confirmToken}`;
+
+    await this.mail.sendMail({
+      to: normalizedEmail,
+      subject: "Confirm your Pryrox account",
+      html: confirmationEmailHtml(confirmLink),
+      text: `Confirm your Pryrox account: ${confirmLink}`,
+    });
+
+    return { success: true, userId };
   }
 
   private selectPrimary(rows: Array<{ pharmacy_id: string | null; role: string | null }>) {
