@@ -4,10 +4,10 @@
   "private": true,
   "scripts": {
     "build": "nest build",
-    "start": "nest start",
+    "start": "node --max-old-space-size=384 dist/main",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main",
+    "start:prod": "node --max-old-space-size=384 dist/main",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate"
   },
