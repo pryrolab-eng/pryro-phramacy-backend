@@ -39,7 +39,7 @@ async function bootstrap() {
       "REST API for Pryrox pharmacy operations. Protected endpoints authenticate with the HttpOnly pryrox_session cookie issued by the Next.js application.",
     )
     .setVersion("1.0")
-    .addServer(`http://localhost:${config.port}`, "Local development")
+    .addServer(`${config.serverUrl}:${config.port}`, `${config.nodeEnv} Server`)
     .addCookieAuth(
       "pryrox_session",
       {

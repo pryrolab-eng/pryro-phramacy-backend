@@ -10,6 +10,10 @@ import {
 export class AppConfigService {
   constructor(private readonly config: ConfigService<Env, true>) {}
 
+  get serverUrl (): string {
+    return this.config.get("SERVER_URL", { infer: true})
+  }
+
   get port(): number {
     return this.config.get("PORT", { infer: true });
   }

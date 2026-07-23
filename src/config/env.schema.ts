@@ -14,6 +14,7 @@ export const envSchema = z.object({
     .enum(["true", "false", "0", "1"])
     .optional()
     .transform((v) => v !== "false" && v !== "0"),
+  SERVER_URL: z.string().optional(),
   PORT: z.coerce.number().int().positive().default(4000),
   NODE_ENV: z
     .enum(["development", "production", "test"])
