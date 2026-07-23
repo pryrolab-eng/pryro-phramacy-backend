@@ -53,6 +53,10 @@ export const envSchema = z.object({
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().optional(),
   SMTP_SECURE: z.string().optional(),
+  // Cloudinary (optional file uploads CDN)
+  CLOUDINARY_CLOUD_NAME: z.string().optional(),
+  CLOUDINARY_API_KEY: z.string().optional(),
+  CLOUDINARY_API_SECRET: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
