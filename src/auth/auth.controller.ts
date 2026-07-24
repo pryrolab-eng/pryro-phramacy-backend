@@ -125,8 +125,22 @@ export class AuthController {
       await this.sessionTokens.revokeSessionByToken(accessJwt);
     }
 
-    res.clearCookie(cookieName, { path: "/" });
-    res.clearCookie(refreshCookieName, { path: "/" });
+    const isProduction = this.appConfig.nodeEnv === "production";
+    const clearOpts = {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: "lax" as const,
+      path: "/",
+      expires: new Date(0),
+      maxAge: 0,
+    };
+
+    res.clearCookie(cookieName, clearOpts);
+    res.clearCookie("pryrox_session", clearOpts);
+    res.clearCookie("__Secure-pryrox_session", clearOpts);
+    res.clearCookie(refreshCookieName, clearOpts);
+    res.clearCookie("pryrox_refresh", clearOpts);
+    res.clearCookie("__Secure-pryrox_refresh", clearOpts);
 
     return { success: true };
   }
