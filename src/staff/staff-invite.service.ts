@@ -206,7 +206,7 @@ export class StaffInviteService {
   async invitePharmacyStaffMember(input: InvitePharmacyStaffInput) {
     const email = input.email.trim().toLowerCase();
     const password =
-      typeof input.password === "string" && input.password.trim().length >= 6
+      typeof input.password === "string" && input.password.trim().length >= 8
         ? input.password.trim()
         : generateTemporaryPassword();
 

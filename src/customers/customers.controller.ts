@@ -72,41 +72,47 @@ export class CustomersController {
   @Get()
   @ApiOperation({
     summary: "List or search customers",
-    description: "Returns all customers for the authenticated user's pharmacy, including purchase totals. When `q` is supplied, returns at most five lightweight matches. An unauthenticated request or an internal lookup failure returns an empty array.",
+    description: "Returns customers for the authenticated user's pharmacy, including purchase totals and pagination support. When `q` is supplied, returns at most five lightweight matches. An unauthenticated request or an internal lookup failure returns an empty result.",
   })
   @ApiQuery({ name: "q", required: false, type: String, description: "Optional case-insensitive search across name, phone variants, email, and insurance number.", example: "Uwase" })
+  @ApiQuery({ name: "page", required: false, type: Number, description: "1-indexed page number.", example: 1 })
+  @ApiQuery({ name: "limit", required: false, type: Number, description: "Page size limit (1-200).", example: 50 })
   @ApiOkResponse({
-    description: "Customers were returned. Search results use the lightweight shape with only `id`, `name`, `phone`, and `insurance_number`; unfiltered results use the full customer shape.",
-    schema: {
-      type: "array",
-      items: {
-        oneOf: [
-          { $ref: getSchemaPath(CustomerDto) },
-          { $ref: getSchemaPath(CustomerSearchResultDto) },
-        ],
-      },
-    },
+    description: "Customers were returned. Unfiltered results are paginated.",
   })
-  async list(@Req() request: Request, @Query("q") rawQuery?: string) {
+  async list(
+    @Req() request: Request,
+    @Query("q") rawQuery?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+  ) {
     try {
       const user = await this.auth.resolveUserFromRequest(request);
-      if (!user) return [];
+      if (!user) return { rows: [], total: 0, page: 1, limit: 50 };
       const pharmacyId = await this.tenant.requirePharmacyId(user.id);
       const query = rawQuery?.trim() || "";
       if (query) {
         const rows = await this.service.search(pharmacyId, query);
         return rows.map((row) => ({ ...row, phone: row.phone ?? "" }));
       }
-      const [customers, totals] = await Promise.all([
-        this.service.list(pharmacyId),
+      const pageNum = Math.max(1, Number(page) || 1);
+      const limitNum = Math.max(1, Math.min(200, Number(limit) || 50));
+      const [result, totals] = await Promise.all([
+        this.service.list(pharmacyId, pageNum, limitNum),
         this.service.totals(pharmacyId),
       ]);
-      return customers.map((row) =>
+      const formattedRows = result.rows.map((row) =>
         formattedCustomer(row, this.service.lookupTotal(totals, row.name, row.phone)),
       );
+      return {
+        rows: formattedRows,
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+      };
     } catch (error) {
       console.error("GET /api/customers", error);
-      return [];
+      throw new HttpException({ error: "Failed to fetch customers" }, 500);
     }
   }
 
@@ -162,7 +168,7 @@ export class CustomersController {
   async combined(@CurrentUser() user: AuthUser, @Query("branchId") _branchId?: string) {
     try {
       const pharmacyId = await this.tenant.requirePharmacyId(user.id);
-      const customers = await this.service.list(pharmacyId);
+      const { rows: customers } = await this.service.list(pharmacyId, 1, 10000);
       const monthStart = new Date();
       monthStart.setDate(1);
       monthStart.setHours(0, 0, 0, 0);

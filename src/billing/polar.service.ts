@@ -1,6 +1,7 @@
-import { Injectable, HttpException } from "@nestjs/common";
+import { Injectable, HttpException, Logger } from "@nestjs/common";
 import { Polar } from "@polar-sh/sdk";
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeGateway } from "../integrations/realtime.gateway";
 
 function isPolarConfigured(): boolean {
   return Boolean(process.env.POLAR_ACCESS_TOKEN?.trim());
@@ -20,7 +21,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 @Injectable()
 export class PolarService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(PolarService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeGateway,
+  ) {}
 
   getConfig() {
     return { enabled: isPolarConfigured(), server: getPolarServer() };
@@ -35,13 +41,18 @@ export class PolarService {
     }
 
     const plan = UUID_RE.test(input.planId)
-      ? await this.prisma.subscription_plans.findFirst({ where: { is_active: true, id: input.planId }, select: { id: true, name: true, price: true, polar_product_id: true } })
-      : await this.prisma.subscription_plans.findFirst({ where: { is_active: true, name: { equals: input.planId, mode: "insensitive" } }, select: { id: true, name: true, price: true, polar_product_id: true } });
+      ? await this.prisma.subscription_plans.findFirst({ where: { is_active: true, id: input.planId }, select: { id: true, name: true, price: true, yearly_price: true, billing_period: true, polar_product_id: true } })
+      : await this.prisma.subscription_plans.findFirst({ where: { is_active: true, name: { equals: input.planId, mode: "insensitive" } }, select: { id: true, name: true, price: true, yearly_price: true, billing_period: true, polar_product_id: true } });
 
     if (!plan) throw new HttpException("Plan not found", 404);
-    if (Number(plan.price) <= 0) throw new HttpException("Free plans do not require Polar checkout.", 400);
+    const billingPeriod = plan.billing_period ?? "monthly";
+    const chargeAmount = billingPeriod === "yearly" && plan.yearly_price ? Number(plan.yearly_price) : Number(plan.price);
+    if (chargeAmount <= 0) throw new HttpException("Free plans do not require Polar checkout.", 400);
     if (!plan.polar_product_id) {
-      throw new HttpException(`Plan "${plan.name}" is not synced to Polar yet.`, 400);
+      throw new HttpException(
+        `Plan "${plan.name}" is not configured for card payments yet. Please contact support or use Mobile Money.`,
+        400,
+      );
     }
 
     const polar = getPolarClient();
@@ -62,15 +73,16 @@ export class PolarService {
       metadata: {
         pharmacy_id: input.pharmacyId, subscription_id: input.subscriptionId,
         plan_name: plan.name, return_context: input.returnContext ?? "settings", user_id: input.userId,
+        billing_period: billingPeriod,
       },
     });
 
-    const price = Number(plan.price);
+    const price = chargeAmount;
     const suffix = price >= 1000 ? `${(price / 1000).toFixed(0)}K` : String(price);
     const transaction = await this.prisma.payment_transactions.create({
       data: {
         pharmacy_id: input.pharmacyId, subscription_id: input.subscriptionId,
-        polar_checkout_id: checkout.id, payment_provider: "polar", amount: price, currency: "RWF",
+        polar_checkout_id: checkout.id, payment_provider: "polar", amount: price, currency: (plan as any).currency ?? "RWF",
         payment_method: "polar", customer_name: input.customerName, customer_email: input.customerEmail,
         customer_phone: input.customerPhone ?? null,
         payment_details: `${plan.name} subscription — ${suffix}`, status: "pending",
@@ -122,28 +134,179 @@ export class PolarService {
 
     const type = event.type ?? "";
     const data = (event.data ?? {}) as Record<string, unknown>;
-    const meta = data.metadata as Record<string, unknown> | undefined;
-    const shouldFulfill = type === "checkout.created" && (data.status === "succeeded" || data.status === "confirmed");
-    const checkoutId = (data.id as string) || undefined;
-    const subscriptionId = (meta?.subscription_id as string) || undefined;
 
-    if (shouldFulfill && subscriptionId) {
-      const tx = await this.prisma.payment_transactions.findFirst({ where: { polar_checkout_id: checkoutId } });
-      if (tx) await this.fulfill(tx.id, subscriptionId);
+    this.logger.log(`Polar webhook received: ${type}`);
+
+    switch (type) {
+      case "checkout.created": {
+        const status = String(data.status ?? "");
+        if (status === "succeeded" || status === "confirmed") {
+          const meta = data.metadata as Record<string, unknown> | undefined;
+          const checkoutId = (data.id as string) || undefined;
+          const subscriptionId = (meta?.subscription_id as string) || undefined;
+          const polarSubId = (data.subscription_id as string) || undefined;
+          if (checkoutId && subscriptionId) {
+            const tx = await this.prisma.payment_transactions.findFirst({ where: { polar_checkout_id: checkoutId } });
+            if (tx) await this.fulfill(tx.id, subscriptionId, polarSubId);
+          }
+        }
+        break;
+      }
+
+      case "subscription.created": {
+        const polarSubId = (data.id as string) || undefined;
+        const meta = data.metadata as Record<string, unknown> | undefined;
+        const appSubId = (meta?.subscription_id as string) || undefined;
+
+        if (polarSubId && appSubId) {
+          await this.prisma.subscriptions.update({
+            where: { id: appSubId },
+            data: { polar_subscription_id: polarSubId, updated_at: new Date() },
+          }).catch(() => {});
+        }
+        break;
+      }
+
+      case "subscription.updated": {
+        const polarSubId = (data.id as string) || undefined;
+        if (polarSubId) {
+          await this.handleSubscriptionRenewal(polarSubId, data);
+        }
+        break;
+      }
+
+      case "invoice.paid": {
+        const invoiceData = data as Record<string, unknown>;
+        const subscription = invoiceData.subscription as Record<string, unknown> | undefined;
+        const polarSubId = (subscription?.id as string) || undefined;
+        if (polarSubId) {
+          await this.handleSubscriptionRenewal(polarSubId, data);
+        }
+        break;
+      }
+
+      case "subscription.canceled": {
+        const polarSubId = (data.id as string) || undefined;
+        if (polarSubId) {
+          await this.prisma.subscriptions.updateMany({
+            where: { polar_subscription_id: polarSubId },
+            data: { cancelled_at: new Date(), cancel_reason: "polar_cancelled", updated_at: new Date() },
+          }).catch(() => {});
+          const sub = await this.prisma.subscriptions.findFirst({
+            where: { polar_subscription_id: polarSubId },
+            select: { pharmacy_id: true },
+          });
+          if (sub?.pharmacy_id) {
+            try { this.realtime.broadcastEntitlementsChanged(sub.pharmacy_id); } catch {}
+          }
+        }
+        break;
+      }
+
+      default:
+        this.logger.debug(`Unhandled Polar webhook event: ${type}`);
     }
-    return { received: true, fulfilled: shouldFulfill };
+
+    return { received: true };
   }
 
-  private async fulfill(transactionId: string, subscriptionId?: string | null) {
+  private async handleSubscriptionRenewal(polarSubId: string, data: Record<string, unknown>) {
+    const sub = await this.prisma.subscriptions.findFirst({
+      where: { polar_subscription_id: polarSubId },
+      select: { id: true, pharmacy_id: true, billing_period: true },
+    });
+    if (!sub) {
+      this.logger.warn(`No app subscription found for polar_subscription_id: ${polarSubId}`);
+      return;
+    }
+
+    const now = new Date();
+    let newExpiry: Date;
+    switch (sub.billing_period) {
+      case "yearly":
+        newExpiry = new Date(now.getTime() + 365 * 86400000);
+        break;
+      case "monthly":
+      default:
+        newExpiry = new Date(now.getTime() + 30 * 86400000);
+        break;
+    }
+
+    await this.prisma.subscriptions.update({
+      where: { id: sub.id },
+      data: {
+        is_active: true,
+        status: "active",
+        expires_at: newExpiry,
+        renewed_at: now,
+        billing_cycle_start: now,
+        current_period_start: now,
+        current_period_end: newExpiry,
+        payment_method: "polar",
+        updated_at: now,
+      },
+    });
+
+    const amount = (data.amount as number) || 0;
+    const currency = (data.currency as string) || "RWF";
+    await this.prisma.payment_transactions.create({
+      data: {
+        pharmacy_id: sub.pharmacy_id,
+        subscription_id: sub.id,
+        payment_provider: "polar",
+        payment_method: "polar",
+        amount,
+        currency,
+        customer_name: "Polar renewal",
+        status: "completed",
+        completed_at: now,
+        payment_details: "Polar subscription renewal",
+      },
+    }).catch(() => {});
+
+    if (sub.pharmacy_id) {
+      try { this.realtime.broadcastEntitlementsChanged(sub.pharmacy_id); } catch {}
+    }
+
+    this.logger.log(`Subscription ${sub.id} renewed until ${newExpiry.toISOString()}`);
+  }
+
+  private async fulfill(transactionId: string, subscriptionId?: string | null, polarSubscriptionId?: string | null) {
     await this.prisma.payment_transactions.update({
       where: { id: transactionId },
       data: { status: "completed", completed_at: new Date(), payment_provider: "polar" },
     });
     if (subscriptionId) {
+      const sub = await this.prisma.subscriptions.findUnique({
+        where: { id: subscriptionId },
+        select: { pharmacy_id: true, plan_id: true },
+      });
+      if (!sub) return;
+
+      const plan = sub.plan_id ? await this.prisma.subscription_plans.findUnique({ where: { id: sub.plan_id }, select: { billing_period: true } }) : null;
+      const billingPeriod = plan?.billing_period ?? "monthly";
+      const periodDays = billingPeriod === "yearly" ? 365 : 30;
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + periodDays * 86400000);
+
       await this.prisma.subscriptions.update({
         where: { id: subscriptionId },
-        data: { is_active: true, status: "active", payment_method: "polar", updated_at: new Date() },
+        data: {
+          is_active: true,
+          status: "active",
+          billing_period: billingPeriod,
+          payment_method: "polar",
+          expires_at: expiresAt,
+          billing_cycle_start: now,
+          current_period_start: now,
+          current_period_end: expiresAt,
+          ...(polarSubscriptionId ? { polar_subscription_id: polarSubscriptionId } : {}),
+          updated_at: now,
+        },
       });
+      if (sub.pharmacy_id) {
+        try { this.realtime.broadcastEntitlementsChanged(sub.pharmacy_id); } catch {}
+      }
     }
   }
 }

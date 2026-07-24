@@ -125,15 +125,15 @@ export class InventoryController {
     isArray: true,
   })
   @ApiResponse(internalErrorResponse)
-  async list(@Req() request: Request, @Query("branchId") branchId?: string) {
+  async list(@Req() request: Request, @Query("branchId") branchId?: string, @Query("page") page?: string, @Query("limit") limit?: string) {
     try {
       const user = await this.auth.resolveUserFromRequest(request);
       if (!user) return [];
       const scope = await this.tenant.resolveRequestBranchScope(user.id, branchId);
-      return await this.service.list(scope.pharmacyId, scope.branchId);
+      return await this.service.list(scope.pharmacyId, scope.branchId, Number(page) || 1, Number(limit) || 50);
     } catch (error) {
       console.error("GET /api/inventory", error);
-      return [];
+      throw new HttpException({ error: "Failed to fetch inventory" }, 500);
     }
   }
 
@@ -227,7 +227,7 @@ export class InventoryController {
   ) {
     try {
       const pharmacyId = await this.entitled(user.id);
-      await this.service.updateInventory(id, body);
+      await this.service.updateInventory(id, body, pharmacyId);
       await this.audit.writeAuditLog({
         pharmacyId,
         userId: user.id,
@@ -274,7 +274,7 @@ export class InventoryController {
   ) {
     try {
       const pharmacyId = await this.entitled(user.id);
-      await this.service.deleteInventory(id);
+      await this.service.deleteInventory(id, pharmacyId);
       await this.audit.writeAuditLog({
         pharmacyId,
         userId: user.id,
@@ -358,6 +358,7 @@ export class InventoryController {
         String(body.productId),
         adjustmentType,
         Number(body.quantity),
+        pharmacyId,
       );
       await this.audit.writeAuditLog({
         pharmacyId,
@@ -528,11 +529,12 @@ export class InventoryController {
   @ApiResponse(internalErrorResponse)
   async purchase(@CurrentUser() user: AuthUser, @Body() body: Record<string, unknown>) {
     try {
-      await this.entitled(user.id);
+      const pharmacyId = await this.entitled(user.id);
       const newStock = await this.service.receivePurchase(
         String(body.productId),
         Number(body.quantity),
         body.costPrice == null ? undefined : Number(body.costPrice),
+        pharmacyId,
       );
       return { success: true, newStock };
     } catch (error) {
@@ -552,9 +554,12 @@ export class InventoryController {
   })
   @ApiOkResponse({ description: "Active suppliers were returned.", type: SupplierDto, isArray: true })
   @ApiResponse(internalErrorResponse)
-  async suppliers() {
+  async suppliers(@Req() request: Request) {
     try {
-      return await this.service.suppliers();
+      const user = await this.auth.resolveUserFromRequest(request);
+      if (!user) return [];
+      const pharmacyId = await this.tenant.requirePharmacyId(user.id);
+      return await this.service.suppliers(pharmacyId);
     } catch (error) {
       console.error("GET /api/inventory/suppliers", error);
       throw new HttpException({ error: "Failed to fetch suppliers" }, 500);

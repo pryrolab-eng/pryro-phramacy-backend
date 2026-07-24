@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { IsNotEmpty, IsOptional, IsString } from "class-validator";
 
 export class PlanLimitsDto {
   @ApiProperty() limits!: Record<string, unknown>;
@@ -7,8 +8,15 @@ export class PlanLimitsDto {
 }
 
 export class SubscriptionUpgradeDto {
-  @ApiProperty() planId!: string;
-  @ApiPropertyOptional() paymentTransactionId?: string;
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  planId!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  paymentTransactionId?: string;
 }
 
 export class UpgradeResponseDto {
@@ -17,15 +25,31 @@ export class UpgradeResponseDto {
 }
 
 export class ScheduleDowngradeDto {
-  @ApiProperty() target_plan_id!: string;
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  target_plan_id!: string;
 }
 
 export class BranchAddonDto {
-  @ApiProperty() planId!: string;
-  @ApiPropertyOptional() branchId?: string;
-  @ApiPropertyOptional() branch?: { name?: string; address?: string; phone?: string; email?: string };
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  planId!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  branchId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  branch?: { name?: string; address?: string; phone?: string; email?: string };
 }
 
 export class CancelSubscriptionDto {
-  @ApiProperty() subscription_id!: string;
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  subscription_id!: string;
 }

@@ -57,12 +57,29 @@ export function combinedCustomer(row: CustomerRow) {
 export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(pharmacyId: string): Promise<CustomerRow[]> {
-    const rows = await this.prisma.customers.findMany({
-      where: { pharmacy_id: pharmacyId },
-      orderBy: { created_at: "desc" },
-    });
-    return rows.map(mapCustomer);
+  async list(
+    pharmacyId: string,
+    page = 1,
+    limit = 50,
+  ): Promise<{ rows: CustomerRow[]; total: number; page: number; limit: number }> {
+    const skip = (page - 1) * limit;
+    const [rows, total] = await Promise.all([
+      this.prisma.customers.findMany({
+        where: { pharmacy_id: pharmacyId },
+        orderBy: { created_at: "desc" },
+        skip,
+        take: limit,
+      }),
+      this.prisma.customers.count({
+        where: { pharmacy_id: pharmacyId },
+      }),
+    ]);
+    return {
+      rows: rows.map(mapCustomer),
+      total,
+      page,
+      limit,
+    };
   }
 
   async find(pharmacyId: string, customerId: string) {

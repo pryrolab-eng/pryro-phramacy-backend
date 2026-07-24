@@ -3,10 +3,10 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
-  schemas  = ["auth", "public"]
+  schemas   = ["auth", "public"]
 }
 
 model ip_whitelist {
@@ -39,30 +39,31 @@ model audit_log_entries {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model custom_oauth_providers {
-  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  provider_type         String
-  identifier            String    @unique
-  name                  String
-  client_id             String
-  client_secret         String
-  acceptable_client_ids String[]  @default([])
-  scopes                String[]  @default([])
-  pkce_enabled          Boolean   @default(true)
-  attribute_mapping     Json      @default("{}")
-  authorization_params  Json      @default("{}")
-  enabled               Boolean   @default(true)
-  email_optional        Boolean   @default(false)
-  issuer                String?
-  discovery_url         String?
-  skip_nonce_check      Boolean   @default(false)
-  cached_discovery      Json?
-  discovery_cached_at   DateTime? @db.Timestamptz(6)
-  authorization_url     String?
-  token_url             String?
-  userinfo_url          String?
-  jwks_uri              String?
-  created_at            DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime  @default(now()) @db.Timestamptz(6)
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider_type           String
+  identifier              String    @unique
+  name                    String
+  client_id               String
+  client_secret           String
+  acceptable_client_ids   String[]  @default([])
+  scopes                  String[]  @default([])
+  pkce_enabled            Boolean   @default(true)
+  attribute_mapping       Json      @default("{}")
+  authorization_params    Json      @default("{}")
+  enabled                 Boolean   @default(true)
+  email_optional          Boolean   @default(false)
+  issuer                  String?
+  discovery_url           String?
+  skip_nonce_check        Boolean   @default(false)
+  cached_discovery        Json?
+  discovery_cached_at     DateTime? @db.Timestamptz(6)
+  authorization_url       String?
+  token_url               String?
+  userinfo_url            String?
+  jwks_uri                String?
+  created_at              DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime  @default(now()) @db.Timestamptz(6)
+  custom_claims_allowlist String[]  @default([])
 
   @@index([created_at])
   @@index([enabled])
@@ -462,6 +463,7 @@ model auth_users {
   sessions                    sessions[]
   webauthn_challenges         webauthn_challenges[]
   webauthn_credentials        webauthn_credentials[]
+  accounting_expenses         accounting_expenses[]
   alerts                      alerts[]
   api_keys                    api_keys[]
   app_sessions                app_sessions[]
@@ -469,7 +471,6 @@ model auth_users {
   branches                    branches[]
   cashier_shifts              cashier_shifts[]
   daily_closes                daily_closes[]
-  accounting_expenses         accounting_expenses[]
   global_categories           global_categories[]
   global_insurance_providers  global_insurance_providers[]
   held_sales                  held_sales[]
@@ -477,10 +478,10 @@ model auth_users {
   notification_outbox         notification_outbox[]
   notification_preferences    notification_preferences[]
   notifications               notifications[]
-  push_subscriptions          push_subscriptions[]
   pharmacies                  pharmacies[]
   pharmacy_users              pharmacy_users[]
   purchase_orders             purchase_orders[]
+  push_subscriptions          push_subscriptions[]
   returns                     returns[]
   sales                       sales[]
   staff                       staff[]
@@ -556,19 +557,19 @@ model alerts {
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model api_keys {
-  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  pharmacy_id  String?     @db.Uuid
-  name         String
-  key_hash     String
-  key_prefix   String
-  permissions  String[]    @default([])
-  is_active    Boolean?    @default(true)
-  last_used_at DateTime?   @db.Timestamptz(6)
-  expires_at   DateTime?   @db.Timestamptz(6)
-  created_by   String?     @db.Uuid
-  created_at   DateTime?   @default(now()) @db.Timestamptz(6)
-  users        auth_users? @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  pharmacies   pharmacies? @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pharmacy_id          String?                @db.Uuid
+  name                 String
+  key_hash             String
+  key_prefix           String
+  permissions          String[]               @default([])
+  is_active            Boolean?               @default(true)
+  last_used_at         DateTime?              @db.Timestamptz(6)
+  expires_at           DateTime?              @db.Timestamptz(6)
+  created_by           String?                @db.Uuid
+  created_at           DateTime?              @default(now()) @db.Timestamptz(6)
+  users                auth_users?            @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  pharmacies           pharmacies?            @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   integration_webhooks integration_webhooks[]
 
   @@index([pharmacy_id], map: "idx_api_keys_pharmacy_id")
@@ -615,16 +616,16 @@ model backups {
 }
 
 model integration_webhooks {
-  id                            String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  api_key_id                    String                          @db.Uuid
-  url                           String
-  secret                        String?
-  events                        String[]                        @default([])
-  is_active                     Boolean                         @default(true)
-  created_at                    DateTime                        @default(now()) @db.Timestamptz(6)
-  updated_at                    DateTime                        @default(now()) @db.Timestamptz(6)
-  api_keys                      api_keys                        @relation(fields: [api_key_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                             String                           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  api_key_id                     String                           @db.Uuid
+  url                            String
+  secret                         String?
+  events                         String[]                         @default([])
+  is_active                      Boolean                          @default(true)
+  created_at                     DateTime                         @default(now()) @db.Timestamptz(6)
+  updated_at                     DateTime                         @default(now()) @db.Timestamptz(6)
   integration_webhook_deliveries integration_webhook_deliveries[]
+  api_keys                       api_keys                         @relation(fields: [api_key_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([api_key_id], map: "idx_integration_webhooks_api_key")
   @@index([is_active], map: "idx_integration_webhooks_active")
@@ -632,16 +633,16 @@ model integration_webhooks {
 }
 
 model integration_webhook_deliveries {
-  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  webhook_id      String               @db.Uuid
-  event_type      String
-  payload         Json                 @default("{}")
-  status          String               @default("pending")
-  attempts        Int                  @default(0)
-  last_error      String?
-  response_status Int?
-  created_at      DateTime             @default(now()) @db.Timestamptz(6)
-  delivered_at    DateTime?            @db.Timestamptz(6)
+  id                   String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  webhook_id           String               @db.Uuid
+  event_type           String
+  payload              Json                 @default("{}")
+  status               String               @default("pending")
+  attempts             Int                  @default(0)
+  last_error           String?
+  response_status      Int?
+  created_at           DateTime             @default(now()) @db.Timestamptz(6)
+  delivered_at         DateTime?            @db.Timestamptz(6)
   integration_webhooks integration_webhooks @relation(fields: [webhook_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([status, created_at], map: "idx_integration_webhook_deliveries_pending")
@@ -741,25 +742,26 @@ model cashier_shifts {
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model daily_closes {
-  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  pharmacy_id         String   @db.Uuid
-  branch_id           String   @db.Uuid
-  close_date          DateTime @db.Date
-  total_sales         Decimal  @default(0) @db.Decimal(12, 2)
-  total_transactions  Int      @default(0)
-  cash_amount         Decimal  @default(0) @db.Decimal(12, 2)
-  card_amount         Decimal  @default(0) @db.Decimal(12, 2)
-  mobile_money_amount Decimal  @default(0) @db.Decimal(12, 2)
-  insurance_amount    Decimal  @default(0) @db.Decimal(12, 2)
-  mixed_amount        Decimal  @default(0) @db.Decimal(12, 2)
-  closed_by           String   @db.Uuid
-  closed_at           DateTime @default(now()) @db.Timestamptz(6)
-  created_at          DateTime @default(now()) @db.Timestamptz(6)
-  branches            branches @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                  String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pharmacy_id         String     @db.Uuid
+  branch_id           String     @db.Uuid
+  close_date          DateTime   @db.Date
+  total_sales         Decimal    @default(0) @db.Decimal(12, 2)
+  total_transactions  Int        @default(0)
+  cash_amount         Decimal    @default(0) @db.Decimal(12, 2)
+  card_amount         Decimal    @default(0) @db.Decimal(12, 2)
+  mobile_money_amount Decimal    @default(0) @db.Decimal(12, 2)
+  insurance_amount    Decimal    @default(0) @db.Decimal(12, 2)
+  mixed_amount        Decimal    @default(0) @db.Decimal(12, 2)
+  closed_by           String     @db.Uuid
+  closed_at           DateTime   @default(now()) @db.Timestamptz(6)
+  created_at          DateTime   @default(now()) @db.Timestamptz(6)
+  branches            branches   @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users               auth_users @relation(fields: [closed_by], references: [id], onDelete: Cascade, onUpdate: NoAction)
   pharmacies          pharmacies @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([branch_id, close_date])
+  @@unique([branch_id, close_date], map: "idx_daily_closes_branch_date")
   @@index([pharmacy_id], map: "idx_daily_closes_pharmacy_id")
   @@schema("public")
 }
@@ -820,7 +822,6 @@ model customers {
   customer_loyalty        customer_loyalty[]
   insurance_providers     insurance_providers? @relation(fields: [insurance_provider_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   pharmacies              pharmacies?          @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  sales                   sales[]
 
   @@index([pharmacy_id], map: "idx_customers_pharmacy_id")
   @@index([phone], map: "idx_customers_phone")
@@ -999,8 +1000,8 @@ model inventory {
   branches            branches?         @relation(fields: [branch_id], references: [id], onUpdate: NoAction)
   medications         medications?      @relation(fields: [medication_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   pharmacies          pharmacies?       @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  stock_locations     stock_locations?  @relation(fields: [stock_location_id], references: [id], onUpdate: NoAction)
   suppliers           suppliers?        @relation(fields: [supplier_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  stock_locations     stock_locations?  @relation(fields: [stock_location_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   return_items        return_items[]
   sale_items          sale_items[]
   stock_movements     stock_movements[]
@@ -1064,8 +1065,6 @@ model medications {
   generic_name          String?
   brand_name            String?
   category              medication_category?    @default(otc)
-  category_id           String?                 @db.Uuid
-  global_category_id    String?                 @db.Uuid
   dosage_form           String?
   strength              String?
   manufacturer          String?
@@ -1076,10 +1075,12 @@ model medications {
   created_at            DateTime?               @default(now()) @db.Timestamptz(6)
   updated_at            DateTime?               @default(now()) @db.Timestamptz(6)
   insurance_coverage    Json                    @default("{}")
+  category_id           String?                 @db.Uuid
+  global_category_id    String?                 @db.Uuid
   insurance_claim_lines insurance_claim_lines[]
   inventory             inventory[]
-  categories            categories?             @relation(fields: [category_id], references: [id], onUpdate: NoAction, onDelete: SetNull)
-  global_categories     global_categories?      @relation(fields: [global_category_id], references: [id], onUpdate: NoAction, onDelete: SetNull)
+  categories            categories?             @relation(fields: [category_id], references: [id], onUpdate: NoAction)
+  global_categories     global_categories?      @relation(fields: [global_category_id], references: [id], onUpdate: NoAction)
   pharmacies            pharmacies?             @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   purchase_order_items  purchase_order_items[]
 
@@ -1183,22 +1184,21 @@ model notification_delivery_log {
 }
 
 model ai_trace_events {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   trace_id      String
-  tenant_id     String?   @db.Uuid
+  tenant_id     String?  @db.Uuid
   feature       String
   model         String
-  input_tokens  Int       @default(0)
-  output_tokens Int       @default(0)
-  latency_ms    Int       @default(0)
-  success       Boolean
-  fallback      Boolean
+  input_tokens  Int      @default(0)
+  output_tokens Int      @default(0)
+  latency_ms    Int      @default(0)
+  success       Boolean  @default(false)
+  fallback      Boolean  @default(false)
   error         String?
-  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([tenant_id], map: "idx_ai_trace_events_tenant_id")
   @@index([feature], map: "idx_ai_trace_events_feature")
-  @@index([created_at], map: "idx_ai_trace_events_created_at")
   @@index([success], map: "idx_ai_trace_events_success")
   @@schema("public")
 }
@@ -1213,8 +1213,8 @@ model push_subscriptions {
   user_agent  String?
   created_at  DateTime    @default(now()) @db.Timestamptz(6)
   updated_at  DateTime    @default(now()) @db.Timestamptz(6)
-  auth_users  auth_users  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   pharmacies  pharmacies? @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  auth_users  auth_users  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([user_id], map: "idx_push_subscriptions_user")
   @@index([pharmacy_id], map: "idx_push_subscriptions_pharmacy")
@@ -1232,8 +1232,8 @@ model accounting_expenses {
   created_by   String?     @db.Uuid
   created_at   DateTime    @default(now()) @db.Timestamptz(6)
   updated_at   DateTime    @default(now()) @db.Timestamptz(6)
+  auth_users   auth_users? @relation(fields: [created_by], references: [id], onUpdate: NoAction)
   pharmacies   pharmacies  @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  auth_users   auth_users? @relation(fields: [created_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
   @@index([pharmacy_id, expense_date], map: "idx_accounting_expenses_pharmacy_date")
   @@index([category], map: "idx_accounting_expenses_category")
@@ -1255,13 +1255,13 @@ model platform_email_templates {
 
 model report_schedules {
   id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  pharmacy_id String    @db.Uuid
+  pharmacy_id String     @db.Uuid
   report_type String
   frequency   String
-  recipients  Json      @default("[]")
-  is_active   Boolean   @default(true)
-  created_at  DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at  DateTime  @default(now()) @db.Timestamptz(6)
+  recipients  Json       @default("[]")
+  is_active   Boolean    @default(true)
+  created_at  DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime   @default(now()) @db.Timestamptz(6)
   pharmacies  pharmacies @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([pharmacy_id, report_type])
@@ -1376,6 +1376,7 @@ model pharmacies {
   primary_color                 String?                         @default("#3b82f6")
   custom_domain                 String?
   platform_name                 String?
+  accounting_expenses           accounting_expenses[]
   alerts                        alerts[]
   api_keys                      api_keys[]
   audit_logs                    audit_logs[]
@@ -1383,10 +1384,10 @@ model pharmacies {
   branch_usage                  branch_usage[]
   branches                      branches[]
   cashier_shifts                cashier_shifts[]
-  daily_closes                  daily_closes[]
   categories                    categories[]
   customer_loyalty              customer_loyalty[]
   customers                     customers[]
+  daily_closes                  daily_closes[]
   discounts                     discounts[]
   held_sales                    held_sales[]
   insurance_claims              insurance_claims[]
@@ -1409,11 +1410,10 @@ model pharmacies {
   pharmacy_settings             pharmacy_settings[]
   pharmacy_users                pharmacy_users[]
   prescriptions                 prescriptions[]
-  accounting_expenses           accounting_expenses[]
-  push_subscriptions            push_subscriptions[]
   purchase_orders               purchase_orders[]
-  report_schedules              report_schedules[]
+  push_subscriptions            push_subscriptions[]
   report_cache                  report_cache[]
+  report_schedules              report_schedules[]
   returns                       returns[]
   sales                         sales[]
   staff                         staff[]
@@ -1585,9 +1585,9 @@ model held_sales {
   cart        Json        @default("[]")
   created_at  DateTime    @default(now()) @db.Timestamptz(6)
   updated_at  DateTime    @default(now()) @db.Timestamptz(6)
-  pharmacies  pharmacies  @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   branches    branches?   @relation(fields: [branch_id], references: [id], onUpdate: NoAction)
   auth_users  auth_users? @relation(fields: [cashier_id], references: [id], onUpdate: NoAction)
+  pharmacies  pharmacies  @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([pharmacy_id, branch_id], map: "idx_held_sales_pharmacy_branch")
   @@schema("public")
@@ -1725,10 +1725,8 @@ model sales {
   id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   pharmacy_id           String?                @db.Uuid
   cashier_id            String?                @db.Uuid
-  customer_id           String?                @db.Uuid
   customer_name         String?
   customer_phone        String?
-  patient_name          String?
   insurance_provider_id String?                @db.Uuid
   subtotal              Decimal?               @default(0.00) @db.Decimal(10, 2)
   insurance_amount      Decimal?               @default(0.00) @db.Decimal(10, 2)
@@ -1743,12 +1741,13 @@ model sales {
   updated_at            DateTime?              @default(now()) @db.Timestamptz(6)
   branch_id             String?                @db.Uuid
   shift_id              String?                @db.Uuid
+  customer_id           String?                @db.Uuid
+  patient_name          String?
   insurance_claims      insurance_claims[]
   payment_transactions  payment_transactions[]
   returns               returns[]
   sale_items            sale_items[]
   branches              branches?              @relation(fields: [branch_id], references: [id], onUpdate: NoAction)
-  customers             customers?             @relation(fields: [customer_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   users                 auth_users?            @relation(fields: [cashier_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   insurance_providers   insurance_providers?   @relation(fields: [insurance_provider_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   pharmacies            pharmacies?            @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -1806,15 +1805,15 @@ model staff_branch_assignments {
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model stock_locations {
-  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  pharmacy_id String     @db.Uuid
-  name        String     @db.VarChar(100)
-  description String?    @default("")
-  is_active   Boolean    @default(true)
-  created_at  DateTime?  @default(now()) @db.Timestamptz(6)
-  updated_at  DateTime?  @default(now()) @db.Timestamptz(6)
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pharmacy_id String      @db.Uuid
+  name        String      @db.VarChar(100)
+  description String?     @default("")
+  is_active   Boolean     @default(true)
+  created_at  DateTime?   @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime?   @default(now()) @db.Timestamptz(6)
   inventory   inventory[]
-  pharmacies  pharmacies @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  pharmacies  pharmacies  @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([is_active], map: "idx_stock_locations_active")
   @@index([pharmacy_id], map: "idx_stock_locations_pharmacy")
@@ -1946,6 +1945,7 @@ model subscription_plans {
   yearly_price                                                                           Decimal?                     @db.Decimal(12, 2)
   grace_period_days                                                                      Int                          @default(3)
   yearly_discount_pct                                                                    Int                          @default(17)
+  currency                                                                               String                       @default("RWF")
   plan_features                                                                          plan_features[]
   subscription_change_events_subscription_change_events_from_plan_idTosubscription_plans subscription_change_events[] @relation("subscription_change_events_from_plan_idTosubscription_plans")
   subscription_change_events_subscription_change_events_to_plan_idTosubscription_plans   subscription_change_events[] @relation("subscription_change_events_to_plan_idTosubscription_plans")
@@ -1993,6 +1993,7 @@ model subscriptions {
   change_scheduled_at                                               DateTime?                       @db.Timestamptz(6)
   change_type                                                       String?
   pending_change_status                                             String?
+  polar_subscription_id                                             String?
   branch_usage                                                      branch_usage[]
   payment_transactions                                              payment_transactions[]
   subscription_change_events                                        subscription_change_events[]
@@ -2003,6 +2004,7 @@ model subscriptions {
   pharmacies                                                        pharmacies?                     @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   subscription_plans_subscriptions_plan_idTosubscription_plans      subscription_plans?             @relation("subscriptions_plan_idTosubscription_plans", fields: [plan_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  @@index([polar_subscription_id], map: "idx_subscriptions_polar_sub_id")
   @@schema("public")
 }
 
@@ -2159,6 +2161,49 @@ model webhooks {
   pharmacies         pharmacies?          @relation(fields: [pharmacy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([pharmacy_id], map: "idx_webhooks_pharmacy_id")
+  @@schema("public")
+}
+
+model maintenance_notification_log {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batch_id   String   @db.Uuid
+  email      String
+  status     String   @default("pending")
+  error      String?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([batch_id], map: "idx_maintenance_notification_log_batch")
+  @@map("maintenance_notification_log")
+  @@schema("public")
+}
+
+model ai_threads {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id     String   @db.Uuid
+  pharmacy_id String?  @db.Uuid
+  branch_id   String?  @db.Uuid
+  scope       String   @default("pharmacy")
+  title       String?
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([user_id], map: "idx_ai_threads_user_id")
+  @@index([pharmacy_id], map: "idx_ai_threads_pharmacy_id")
+  @@index([scope], map: "idx_ai_threads_scope")
+  @@schema("public")
+}
+
+model ai_messages {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  thread_id  String   @db.Uuid
+  role       String
+  content    String
+  tool_calls Json?
+  a2ui_data  Json?
+  tokens     Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([thread_id], map: "idx_ai_messages_thread_id")
   @@schema("public")
 }
 
@@ -2336,50 +2381,5 @@ enum user_role {
   cashier
   staff
 
-  @@schema("public")
-}
-
-model maintenance_notification_log {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  batch_id   String   @db.Uuid
-  email      String
-  status     String   @default("pending")
-  error      String?
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-
-  @@index([batch_id], map: "idx_maintenance_notification_log_batch")
-  @@map("maintenance_notification_log")
-  @@schema("public")
-}
-
-model ai_threads {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id     String    @db.Uuid
-  pharmacy_id String?   @db.Uuid
-  branch_id   String?   @db.Uuid
-  scope       String    @default("pharmacy")
-  title       String?
-  created_at  DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at  DateTime  @updatedAt @db.Timestamptz(6)
-  messages    ai_messages[]
-
-  @@index([user_id], map: "idx_ai_threads_user_id")
-  @@index([pharmacy_id], map: "idx_ai_threads_pharmacy_id")
-  @@index([scope], map: "idx_ai_threads_scope")
-  @@schema("public")
-}
-
-model ai_messages {
-  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  thread_id  String     @db.Uuid
-  role       String
-  content    String
-  tool_calls Json?
-  a2ui_data  Json?
-  tokens     Int?
-  created_at DateTime   @default(now()) @db.Timestamptz(6)
-  thread     ai_threads @relation(fields: [thread_id], references: [id], onDelete: Cascade)
-
-  @@index([thread_id], map: "idx_ai_messages_thread_id")
   @@schema("public")
 }

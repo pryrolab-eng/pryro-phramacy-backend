@@ -42,7 +42,10 @@ export class SalesService {
     const limit = Number.isFinite(limitRaw)
       ? Math.min(Math.max(Math.floor(limitRaw), 1), 200)
       : 100;
-    return { period, q, from, to, limit };
+    const pageRaw = Number(query.page ?? "1");
+    const page =
+      Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
+    return { period, q, from, to, limit, page };
   }
 
   private listDateRange(query: ReturnType<SalesService["parseListQuery"]>) {
@@ -93,11 +96,16 @@ export class SalesService {
       ];
     }
 
-    const sales = await this.prisma.sales.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      take: query.limit,
-    });
+    const skip = (query.page - 1) * query.limit;
+    const [sales, totalSalesCount] = await Promise.all([
+      this.prisma.sales.findMany({
+        where,
+        orderBy: { created_at: "desc" },
+        skip,
+        take: query.limit,
+      }),
+      this.prisma.sales.count({ where }),
+    ]);
     const saleIds = sales.map((sale) => sale.id);
     const itemCounts = saleIds.length
       ? await this.prisma.sale_items.groupBy({
@@ -143,8 +151,11 @@ export class SalesService {
         todayTotal: Number(todayAgg._sum.total_amount ?? 0),
         weekTotal: Number(weekAgg._sum.total_amount ?? 0),
         monthTotal: Number(monthAgg._sum.total_amount ?? 0),
-        totalSales: formattedSales.length,
+        totalSales: totalSalesCount,
       },
+      total: totalSalesCount,
+      page: query.page,
+      limit: query.limit,
     };
   }
 
@@ -159,47 +170,53 @@ export class SalesService {
           total_price: number;
         }>
       | undefined;
-    const newSale = await this.prisma.sales.create({
-      data: {
-        pharmacy_id: pharmacyId,
-        customer_name: (sale.customer_name as string) || "Walk-in Customer",
-        subtotal: sale.subtotal as number,
-        insurance_amount: (sale.insurance_amount as number) || 0,
-        customer_amount: sale.customer_amount as number,
-        total_amount: sale.total_amount as number,
-        payment_method: sale.payment_method as payment_method,
-        status: sale.status as sale_status,
-        receipt_number: `RCP-${Date.now()}`,
-      },
-    });
-    if (items && items.length > 0) {
-      await this.prisma.sale_items.createMany({
-        data: items.map((item) => ({
-          sale_id: newSale.id,
-          inventory_id: item.inventory_id,
-          medication_name: item.medication_name,
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-          total_price: item.total_price,
-        })),
+
+    return this.prisma.$transaction(async (tx) => {
+      const newSale = await tx.sales.create({
+        data: {
+          pharmacy_id: pharmacyId,
+          customer_name: (sale.customer_name as string) || "Walk-in Customer",
+          subtotal: sale.subtotal as number,
+          insurance_amount: (sale.insurance_amount as number) || 0,
+          customer_amount: sale.customer_amount as number,
+          total_amount: sale.total_amount as number,
+          payment_method: sale.payment_method as payment_method,
+          status: sale.status as sale_status,
+          receipt_number: `RCP-${Date.now()}`,
+        },
       });
-      for (const item of items) {
-        const inventory = await this.prisma.inventory.findUnique({
-          where: { id: item.inventory_id },
-          select: { quantity_in_stock: true },
+
+      if (items && items.length > 0) {
+        await tx.sale_items.createMany({
+          data: items.map((item) => ({
+            sale_id: newSale.id,
+            inventory_id: item.inventory_id,
+            medication_name: item.medication_name,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            total_price: item.total_price,
+          })),
         });
-        if (inventory) {
-          await this.prisma.inventory.update({
-            where: { id: item.inventory_id },
-            data: {
-              quantity_in_stock:
-                Number(inventory.quantity_in_stock) - item.quantity,
+
+        for (const item of items) {
+          const updated = await tx.inventory.updateMany({
+            where: {
+              id: item.inventory_id,
+              pharmacy_id: pharmacyId,
+              quantity_in_stock: { gte: item.quantity },
             },
+            data: { quantity_in_stock: { decrement: item.quantity } },
           });
+          if (updated.count === 0) {
+            throw new Error(
+              `Insufficient stock for ${item.medication_name}`,
+            );
+          }
         }
       }
-    }
-    return newSale;
+
+      return newSale;
+    });
   }
 
   private reportWhere(

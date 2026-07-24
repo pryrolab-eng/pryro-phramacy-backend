@@ -44,16 +44,16 @@ export class SubscriptionsController {
     }
   }
 
-  @Post("subscriptions/status")
-  @ApiOperation({ summary: "Upgrade or change subscription plan" })
-  async createSubscription(@CurrentUser() user: AuthUser, @Body() body: SubscriptionUpgradeDto, @Req() req: Request) {
+  @Post("subscriptions/upgrade")
+  @ApiOperation({ summary: "Upgrade or subscribe to a plan" })
+  async upgrade(@CurrentUser() user: AuthUser, @Body() body: SubscriptionUpgradeDto, @Req() req: Request) {
     try {
       const pharmacyId = await this.tenant.requirePharmacyId(user.id);
       const result = await this.service.upgrade(pharmacyId, body.planId, body.paymentTransactionId);
       const sub = result.subscription as { id: string };
       await this.audit.writeAuditLog({
         pharmacyId, userId: user.id, action: "UPDATE", tableName: "subscriptions", recordId: sub?.id,
-        newValues: { planId: body.planId, requiresPayment: result.subscription.requiresPayment },
+        newValues: { planId: body.planId, action: "upgrade", requiresPayment: result.subscription.requiresPayment },
         ipAddress: req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim(),
         userAgent: req.headers["user-agent"] ?? undefined,
       });
@@ -64,10 +64,43 @@ export class SubscriptionsController {
     }
   }
 
-  @Post("subscriptions/upgrade")
-  @ApiOperation({ summary: "Upgrade subscription plan" })
-  async upgrade(@CurrentUser() user: AuthUser, @Body() body: SubscriptionUpgradeDto, @Req() req: Request) {
-    return this.createSubscription(user, body, req);
+  @Post("subscriptions/renew")
+  @ApiOperation({ summary: "Renew current plan (extends billing period)" })
+  async renew(@CurrentUser() user: AuthUser, @Body() body: SubscriptionUpgradeDto, @Req() req: Request) {
+    try {
+      const pharmacyId = await this.tenant.requirePharmacyId(user.id);
+      const result = await this.service.renew(pharmacyId, body.planId, body.paymentTransactionId);
+      const sub = result.subscription as { id: string };
+      await this.audit.writeAuditLog({
+        pharmacyId, userId: user.id, action: "UPDATE", tableName: "subscriptions", recordId: sub?.id,
+        newValues: { planId: body.planId, action: "renew", requiresPayment: result.subscription.requiresPayment },
+        ipAddress: req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim(),
+        userAgent: req.headers["user-agent"] ?? undefined,
+      });
+      return result;
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException({ error: "Renewal failed" }, 500);
+    }
+  }
+
+  @Post("subscriptions/cancel")
+  @ApiOperation({ summary: "Cancel subscription auto-renewal (active until expiry)" })
+  async cancel(@CurrentUser() user: AuthUser, @Req() req: Request) {
+    try {
+      const pharmacyId = await this.tenant.requirePharmacyId(user.id);
+      const result = await this.service.cancel(pharmacyId);
+      await this.audit.writeAuditLog({
+        pharmacyId, userId: user.id, action: "UPDATE", tableName: "subscriptions", recordId: result.subscriptionId,
+        newValues: { action: "cancel", activeUntil: result.activeUntil },
+        ipAddress: req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim(),
+        userAgent: req.headers["user-agent"] ?? undefined,
+      });
+      return result;
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException({ error: "Cancellation failed" }, 500);
+    }
   }
 
   @Post("subscriptions/schedule-downgrade")

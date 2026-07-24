@@ -178,6 +178,11 @@ export class NotificationsController {
         expiry: body.expiry !== false,
         salesReports: body.salesReports === true,
         systemUpdates: body.systemUpdates !== false,
+        subscriptionRenewalDays: Array.isArray(body.subscriptionRenewalDays)
+          ? body.subscriptionRenewalDays
+              .filter((day): day is number => typeof day === "number" && Number.isInteger(day))
+              .filter((day) => day >= 1 && day <= 30)
+          : [14, 7, 3, 1],
       };
       await this.service.savePrefs(
         user.id,
@@ -435,6 +440,7 @@ export class NotificationsController {
       email: prefs.channelEmail,
       desktop: prefs.channelInApp,
       push: prefs.channelPush,
+      subscriptionRenewalDays: prefs.subscriptionRenewalDays,
     };
   }
 }

@@ -69,10 +69,13 @@ export class SalesController {
   @ApiQuery({ name: "from", required: false, type: String, description: "Inclusive custom range start; used only when to is also supplied.", example: "2026-07-01T00:00:00.000Z", format: "date-time" })
   @ApiQuery({ name: "to", required: false, type: String, description: "Inclusive custom range end; used only when from is also supplied.", example: "2026-07-21T23:59:59.999Z", format: "date-time" })
   @ApiQuery({ name: "limit", required: false, type: Number, description: "Maximum rows, clamped to 1–200 and defaulting to 100.", example: 100 })
+  @ApiQuery({ name: "page", required: false, type: Number, description: "Page number (1-indexed, default 1).", example: 1 })
   @ApiOkResponse({ description: "Sales and aggregate totals were returned.", type: SalesListResponseDto })
   async list(
     @Req() request: Request,
     @Query() query: Record<string, string | undefined>,
+    @Query("page") _page?: string,
+    @Query("limit") _limit?: string,
   ) {
     try {
       const user = await this.auth.resolveUserFromRequest(request);
@@ -167,7 +170,7 @@ export class SalesController {
       return await this.service.payments(pharmacyId);
     } catch (error) {
       console.error("GET /api/sales/payments", error);
-      return [];
+      throw new HttpException({ error: "Failed to fetch payments" }, 500);
     }
   }
 

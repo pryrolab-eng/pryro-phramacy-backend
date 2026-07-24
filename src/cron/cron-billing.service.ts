@@ -1,15 +1,28 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
+import {
+  emailButton,
+  emailFallbackLink,
+  emailParagraph,
+  escapeHtml,
+  pryroxEmailLayout,
+} from "../mail/mail-layout";
+import { MailService } from "../mail/mail.service";
 import { PrismaService } from "../prisma/prisma.service";
 
 const PENDING_TX_STATUSES = ["pending", "processing"] as const;
 const PENDING_SUB_STATUSES = ["pending_payment", "pending"] as const;
+const DEFAULT_RENEWAL_REMINDER_DAYS = [14, 7, 3, 1] as const;
+const MAX_RENEWAL_REMINDER_DAYS = 30;
 
 @Injectable()
 export class CronBillingService {
   private readonly logger = new Logger(CronBillingService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mail: MailService,
+  ) {}
 
   /** Daily at 02:00 — cancel stale pending payments & subscriptions. */
   @Cron("0 2 * * *", { name: "cancel-stale-pending-payments" })
@@ -64,22 +77,21 @@ export class CronBillingService {
   }
 
   async runRenewalReminders() {
-    // Remind at these thresholds (days before expiry)
-    const REMINDER_DAYS = [14, 7, 3, 1];
     const now = new Date();
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+    const lookAheadEnd = new Date(
+      startOfToday.getTime() + (MAX_RENEWAL_REMINDER_DAYS + 1) * 86_400_000,
+    );
     let sent = 0;
+    let emailed = 0;
     let skipped = 0;
-
-    for (const daysLeft of REMINDER_DAYS) {
-      const windowStart = new Date(now.getTime() + daysLeft * 86_400_000);
-      windowStart.setHours(0, 0, 0, 0);
-      const windowEnd = new Date(windowStart.getTime() + 86_400_000);
 
       const expiringSubs = await this.prisma.subscriptions.findMany({
         where: {
           is_active: true,
           status: { notIn: ["cancelled", "expired", "pending_payment"] },
-          expires_at: { gte: windowStart, lt: windowEnd },
+          expires_at: { gte: startOfToday, lt: lookAheadEnd },
         },
         select: {
           id: true,
@@ -96,7 +108,15 @@ export class CronBillingService {
       });
 
       for (const sub of expiringSubs) {
-        if (!sub.pharmacy_id) continue;
+        if (!sub.pharmacy_id || !sub.expires_at) continue;
+
+        const daysLeft = Math.ceil(
+          (sub.expires_at.getTime() - startOfToday.getTime()) / 86_400_000,
+        );
+        if (daysLeft < 1 || daysLeft > MAX_RENEWAL_REMINDER_DAYS) {
+          skipped++;
+          continue;
+        }
 
         const dedupeKey = `renewal_reminder:${sub.id}:${daysLeft}d`;
 
@@ -109,28 +129,77 @@ export class CronBillingService {
         const planName = sub.subscription_plans_subscriptions_plan_idTosubscription_plans?.name ?? "your plan";
         const pharmacyName = sub.pharmacies?.name ?? "your pharmacy";
         const ownerId = sub.pharmacies?.pharmacy_users[0]?.user_id ?? null;
-        const expiryDate = sub.expires_at?.toISOString().slice(0, 10) ?? "";
-        const urgency = daysLeft <= 3 ? "urgent" : "warning";
+        const prefs = ownerId
+          ? await this.loadRenewalNotificationPrefs(ownerId, sub.pharmacy_id)
+          : {
+              channelInApp: true,
+              channelEmail: false,
+              reminderDays: [...DEFAULT_RENEWAL_REMINDER_DAYS],
+            };
+        if (!prefs.reminderDays.includes(daysLeft)) {
+          skipped++;
+          continue;
+        }
+        if (!prefs.channelInApp && !prefs.channelEmail) {
+          skipped++;
+          continue;
+        }
 
-        // Write in-app notification to outbox
-        await this.prisma.notification_outbox.create({
-          data: {
-            event_type: "subscription.expiring_soon",
-            pharmacy_id: sub.pharmacy_id,
-            user_id: ownerId,
-            payload: {
-              title: daysLeft === 1
+        const expiryDate = sub.expires_at.toISOString().slice(0, 10);
+        const urgency = daysLeft <= 3 ? "urgent" : "warning";
+        const billingUrl = `${this.getAppUrl()}/pharmacy/billing`;
+        const reminderTitle =
+          daysLeft === 1
+            ? "Subscription expires tomorrow"
+            : `Subscription expires in ${daysLeft} days`;
+
+        if (prefs.channelInApp) {
+          await this.prisma.notification_outbox.create({
+            data: {
+              event_type: "subscription.expiring_soon",
+              pharmacy_id: sub.pharmacy_id,
+              user_id: ownerId,
+              payload: withoutLegacyTitle({
+                legacyTitle: daysLeft === 1
                 ? `⚠️ Subscription expires tomorrow!`
                 : `Subscription expires in ${daysLeft} days`,
-              message: `${planName} for ${pharmacyName} expires on ${expiryDate}. Renew now to keep full access.`,
-              type: urgency,
-              actionUrl: "/pharmacy/billing",
-              daysLeft,
+                title: reminderTitle,
+                message: `${planName} for ${pharmacyName} expires on ${expiryDate}. Renew now to keep full access.`,
+                type: urgency,
+                actionUrl: "/pharmacy/billing",
+                daysLeft,
+                planName,
+                expiryDate,
+              }),
+            },
+          });
+        }
+
+        if (prefs.channelEmail && ownerId) {
+          const owner = await this.prisma.auth_users.findUnique({
+            where: { id: ownerId },
+            select: { email: true },
+          });
+          if (owner?.email) {
+            const emailInput = {
+              pharmacyName,
               planName,
               expiryDate,
-            } as any,
-          },
-        });
+              daysLeft,
+              billingUrl,
+            };
+            await this.mail.sendMail({
+              to: owner.email,
+              subject:
+                daysLeft === 1
+                  ? `${pharmacyName} subscription expires tomorrow`
+                  : `${pharmacyName} subscription expires in ${daysLeft} days`,
+              html: renewalReminderEmailHtml(emailInput),
+              text: renewalReminderEmailText(emailInput),
+            });
+            emailed++;
+          }
+        }
 
         // Record that we sent this reminder (deduplication)
         await this.prisma.subscription_notification_log.create({
@@ -143,12 +212,41 @@ export class CronBillingService {
 
         sent++;
       }
-    }
-
-    return { sent, skipped, ranAt: new Date().toISOString() };
+    return { sent, emailed, skipped, ranAt: new Date().toISOString() };
   }
 
   // ─── Core logic ─────────────────────────────────────────────────────────────
+
+  private async loadRenewalNotificationPrefs(userId: string, pharmacyId: string) {
+    const row = await this.prisma.notification_preferences.findFirst({
+      where: { user_id: userId, pharmacy_id: pharmacyId },
+      select: {
+        channel_in_app: true,
+        channel_email: true,
+        event_prefs: true,
+      },
+    });
+    const eventPrefs =
+      row?.event_prefs &&
+      typeof row.event_prefs === "object" &&
+      !Array.isArray(row.event_prefs)
+        ? (row.event_prefs as Record<string, unknown>)
+        : {};
+
+    return {
+      channelInApp: row?.channel_in_app ?? true,
+      channelEmail: row?.channel_email ?? true,
+      reminderDays: normalizeRenewalDays(eventPrefs.subscriptionRenewalDays),
+    };
+  }
+
+  private getAppUrl(): string {
+    return (
+      process.env["NEXT_PUBLIC_APP_URL"] ??
+      process.env["APP_URL"] ??
+      "https://pryromed.vercel.app"
+    ).replace(/\/+$/, "");
+  }
 
   private getPendingPaymentMaxAgeDays(): number {
     const raw = Number(process.env.PENDING_PAYMENT_EXPIRE_DAYS ?? 7);
@@ -271,4 +369,62 @@ export class CronBillingService {
       ranAt: new Date().toISOString(),
     };
   }
+}
+
+type RenewalReminderEmailInput = {
+  pharmacyName: string;
+  planName: string;
+  expiryDate: string;
+  daysLeft: number;
+  billingUrl: string;
+};
+
+function normalizeRenewalDays(value: unknown): number[] {
+  if (!Array.isArray(value)) return [...DEFAULT_RENEWAL_REMINDER_DAYS];
+  const days = value
+    .filter((day): day is number => typeof day === "number" && Number.isInteger(day))
+    .filter((day) => day >= 1 && day <= MAX_RENEWAL_REMINDER_DAYS);
+  return [...new Set(days)].sort((a, b) => b - a);
+}
+
+function renewalReminderEmailHtml(input: RenewalReminderEmailInput): string {
+  const timing =
+    input.daysLeft === 1
+      ? "tomorrow"
+      : `in ${input.daysLeft} days`;
+
+  return pryroxEmailLayout({
+    title: `Renew ${input.pharmacyName}`,
+    preheader: `${input.planName} expires ${timing}. Renew now to keep access uninterrupted.`,
+    bodyHtml: [
+      emailParagraph(
+        `${escapeHtml(input.planName)} for <strong>${escapeHtml(input.pharmacyName)}</strong> expires <strong>${escapeHtml(timing)}</strong> on ${escapeHtml(input.expiryDate)}.`,
+      ),
+      emailParagraph(
+        "Renew before the expiry date to keep POS, inventory, reports, staff, and branch access available without interruption.",
+      ),
+      emailButton("Renew subscription", input.billingUrl),
+      emailFallbackLink(input.billingUrl),
+    ].join(""),
+    footerNote: "You are receiving this because subscription renewal reminders are enabled for your pharmacy.",
+  });
+}
+
+function renewalReminderEmailText(input: RenewalReminderEmailInput): string {
+  const timing =
+    input.daysLeft === 1
+      ? "tomorrow"
+      : `in ${input.daysLeft} days`;
+  return [
+    `${input.planName} for ${input.pharmacyName} expires ${timing} on ${input.expiryDate}.`,
+    "Renew before the expiry date to keep access uninterrupted.",
+    `Renew subscription: ${input.billingUrl}`,
+  ].join("\n\n");
+}
+
+function withoutLegacyTitle<T extends { legacyTitle?: unknown }>(
+  payload: T,
+): Omit<T, "legacyTitle"> {
+  const { legacyTitle: _legacyTitle, ...clean } = payload;
+  return clean;
 }

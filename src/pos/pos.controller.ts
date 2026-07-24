@@ -87,7 +87,7 @@ export class PosController {
       );
     } catch (error) {
       console.error("GET /api/pos", error);
-      return [];
+      throw new HttpException({ error: "Failed to fetch recent sales" }, 500);
     }
   }
 
@@ -133,7 +133,7 @@ export class PosController {
         throw new HttpException({ error: message, code: "NO_PHARMACY" }, 403);
       }
       console.error("GET /api/pos/products", error);
-      return [];
+      throw new HttpException({ error: "Failed to fetch products" }, 500);
     }
   }
 
@@ -171,7 +171,7 @@ export class PosController {
     } catch (error) {
       if (error instanceof EntitlementError) throw error;
       console.error("GET /api/pos/price-check", error);
-      return [];
+      throw new HttpException({ error: "Failed to check price" }, 500);
     }
   }
 
@@ -194,7 +194,7 @@ export class PosController {
     } catch (error) {
       if (error instanceof EntitlementError) throw error;
       console.error("GET /api/pos/customer-lookup", error);
-      return [];
+      throw new HttpException({ error: "Failed to lookup customer" }, 500);
     }
   }
 
@@ -296,8 +296,8 @@ export class PosController {
       });
     } catch (error) {
       if (error instanceof EntitlementError) throw error;
-      console.error("GET /api/pos/hold-sale", error);
-      return [];
+      console.error("GET /api/pos/held-sales", error);
+      throw new HttpException({ error: "Failed to fetch held sales" }, 500);
     }
   }
 

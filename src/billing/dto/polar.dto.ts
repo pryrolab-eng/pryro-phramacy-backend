@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { IsEmail, IsNotEmpty, IsOptional, IsString } from "class-validator";
 
 export class PolarConfigDto {
   @ApiProperty() enabled!: boolean;
@@ -6,12 +7,35 @@ export class PolarConfigDto {
 }
 
 export class CreateCheckoutDto {
-  @ApiProperty() planId!: string;
-  @ApiProperty() subscriptionId!: string;
-  @ApiPropertyOptional() returnContext?: string;
-  @ApiPropertyOptional() customerEmail?: string;
-  @ApiPropertyOptional() customerName?: string;
-  @ApiPropertyOptional() customerPhone?: string;
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  planId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  subscriptionId!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  returnContext?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEmail()
+  customerEmail?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  customerName?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  customerPhone?: string;
 }
 
 export class CheckoutResponseDto {

@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpException, HttpCode, Post, Req, Res, UseGuards } from "@nestjs/common";
+import { ThrottlerGuard } from "@nestjs/throttler";
 import { ApiBody, ApiCookieAuth, ApiOkResponse, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import type { Request, Response } from "express";
 import { ErrorResponseDto } from "../common/dto";
@@ -16,6 +17,7 @@ import type { AuthUser } from "./models";
 import { SessionGuard } from "./session.guard";
 import { SessionTokenService } from "./session-token.service";
 import { AppConfigService } from "../config/app-config.service";
+import { PrismaService } from "../prisma/prisma.service";
 
 function sessionCookieOptions(appConfig: AppConfigService, expires: Date) {
   const isProduction = appConfig.nodeEnv === "production";
@@ -35,9 +37,11 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly sessionTokens: SessionTokenService,
     private readonly appConfig: AppConfigService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Post("sign-in")
+  @UseGuards(ThrottlerGuard)
   @HttpCode(200)
   @ApiOperation({ summary: "Sign in with email and password" })
   @ApiBody({ type: SignInDto })
@@ -79,11 +83,12 @@ export class AuthController {
   }
 
   @Post("sign-up")
+  @UseGuards(ThrottlerGuard)
   @HttpCode(201)
   @ApiOperation({ summary: "Create a new account" })
   @ApiBody({ type: SignUpDto })
   @ApiOkResponse({ type: SignUpResponseDto })
-  async signUp(@Body() body: SignUpDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+  async signUp(@Body() body: SignUpDto) {
     try {
       const result = await this.authService.signUp(body.email, body.password, body.fullName);
 
@@ -91,24 +96,13 @@ export class AuthController {
         throw new HttpException({ error: result.error }, 400);
       }
 
-      const session = await this.sessionTokens.createSession(
-        result.userId!,
-        req.headers["user-agent"],
-        req.ip,
-      );
-
-      const cookieName = this.appConfig.sessionCookieName;
-      const refreshCookieName = this.appConfig.nodeEnv === "production"
-        ? "__Secure-pryrox_refresh"
-        : "pryrox_refresh";
-
-      const accessExpires = new Date(Date.now() + 60 * 60 * 1000);
-      const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-
-      res.cookie(cookieName, session.accessJwt, sessionCookieOptions(this.appConfig, accessExpires));
-      res.cookie(refreshCookieName, session.refreshJwt, sessionCookieOptions(this.appConfig, refreshExpires));
-
-      return { success: true, userId: result.userId, accessJwt: session.accessJwt, refreshJwt: session.refreshJwt };
+      // Don't issue session cookies — the user must confirm their email first
+      return {
+        success: true,
+        userId: result.userId,
+        needsEmailConfirmation: true,
+        message: "Account created. Please check your email to confirm your account before signing in.",
+      };
     } catch (error) {
       if (error instanceof HttpException) throw error;
       throw new HttpException({ error: "Sign-up failed" }, 500);
@@ -133,6 +127,48 @@ export class AuthController {
 
     res.clearCookie(cookieName, { path: "/" });
     res.clearCookie(refreshCookieName, { path: "/" });
+
+    return { success: true };
+  }
+
+  @Post("refresh")
+  @UseGuards(ThrottlerGuard)
+  @HttpCode(200)
+  @ApiOperation({ summary: "Refresh access token using the refresh cookie" })
+  async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const refreshCookieName = this.appConfig.nodeEnv === "production"
+      ? "__Secure-pryrox_refresh"
+      : "pryrox_refresh";
+    const refreshJwt = req.cookies?.[refreshCookieName];
+
+    if (!refreshJwt) {
+      throw new HttpException({ error: "No refresh token" }, 401);
+    }
+
+    const payload = await this.sessionTokens.verifyRefreshToken(refreshJwt);
+    if (!payload?.sid) {
+      throw new HttpException({ error: "Invalid refresh token" }, 401);
+    }
+
+    const oldSession = await this.prisma.app_sessions.findUnique({ where: { id: payload.sid } });
+    if (!oldSession) {
+      throw new HttpException({ error: "Session revoked" }, 401);
+    }
+
+    // Rotate: revoke old session, create new one so the old refresh token can't be reused
+    await this.sessionTokens.revokeSession(oldSession.id);
+    const newSession = await this.sessionTokens.createSession(
+      oldSession.user_id,
+      oldSession.user_agent ?? undefined,
+      oldSession.ip ?? undefined,
+    );
+
+    const accessExpires = new Date(Date.now() + 60 * 60 * 1000);
+    const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    const cookieName = this.appConfig.sessionCookieName;
+    res.cookie(cookieName, newSession.accessJwt, sessionCookieOptions(this.appConfig, accessExpires));
+    res.cookie(refreshCookieName, newSession.refreshJwt, sessionCookieOptions(this.appConfig, refreshExpires));
 
     return { success: true };
   }
@@ -249,6 +285,7 @@ export class AuthController {
   }
 
   @Post("reset-password")
+  @UseGuards(ThrottlerGuard)
   @HttpCode(200)
   @ApiOperation({ summary: "Reset password using a recovery token" })
   @ApiBody({ type: ResetPasswordDto })
@@ -267,6 +304,7 @@ export class AuthController {
   }
 
   @Post("recovery-email")
+  @UseGuards(ThrottlerGuard)
   @ApiOperation({ summary: "Send password recovery email" })
   @ApiBody({ type: RecoveryEmailDto })
   @ApiOkResponse({ type: RecoveryEmailResponseDto })
@@ -279,6 +317,7 @@ export class AuthController {
   }
 
   @Post("resend-confirmation")
+  @UseGuards(ThrottlerGuard)
   @ApiOperation({ summary: "Resend email confirmation link" })
   @ApiBody({ type: ResendConfirmationDto })
   @ApiOkResponse({ type: ResendConfirmationDto })

@@ -148,7 +148,7 @@ export class BranchesController {
         throw new HttpException({ error: "Branch not found" }, 404);
       }
 
-      const inventory = await this.inventory.list(pharmacyId, branchId);
+      const { rows: inventory } = await this.inventory.list(pharmacyId, branchId, 1, 1000);
       return inventory.map((item) => ({
         id: item.id,
         name: item.name,

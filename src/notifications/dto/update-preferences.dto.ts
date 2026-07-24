@@ -1,6 +1,8 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
 
 export class UpdateNotificationPreferencesDto {
+  @ApiPropertyOptional({ description: "Days before subscription expiry to send renewal reminders.", example: [14, 7, 3, 1], type: [Number] })
+  subscriptionRenewalDays?: number[];
   @ApiPropertyOptional({ description: "Receive daily summary notifications.", example: true, default: true })
   dailyUpdate?: boolean;
 

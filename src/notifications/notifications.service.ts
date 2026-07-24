@@ -13,6 +13,7 @@ const DEFAULT_PREFS: NotificationPrefs = {
   expiry: true,
   salesReports: false,
   systemUpdates: true,
+  subscriptionRenewalDays: [14, 7, 3, 1],
 };
 
 @Injectable()
@@ -81,6 +82,7 @@ export class NotificationsService {
         typeof event.salesReports === "boolean" ? event.salesReports : false,
       systemUpdates:
         typeof event.systemUpdates === "boolean" ? event.systemUpdates : true,
+      subscriptionRenewalDays: normalizeRenewalDays(event.subscriptionRenewalDays),
     };
   }
 
@@ -91,6 +93,7 @@ export class NotificationsService {
       expiry: prefs.expiry,
       salesReports: prefs.salesReports,
       systemUpdates: prefs.systemUpdates,
+      subscriptionRenewalDays: prefs.subscriptionRenewalDays,
     };
     return this.prisma.notification_preferences.upsert({
       where: { user_id_pharmacy_id: { user_id: userId, pharmacy_id: pharmacyId } },
@@ -111,4 +114,12 @@ export class NotificationsService {
       },
     });
   }
+}
+
+function normalizeRenewalDays(value: unknown): number[] {
+  if (!Array.isArray(value)) return [14, 7, 3, 1];
+  const days = value
+    .filter((day): day is number => typeof day === "number" && Number.isInteger(day))
+    .filter((day) => day >= 1 && day <= 30);
+  return [...new Set(days)].sort((a, b) => b - a);
 }

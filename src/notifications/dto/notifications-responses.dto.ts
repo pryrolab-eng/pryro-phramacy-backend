@@ -80,6 +80,13 @@ export class NotificationPreferencesDto {
 
   @ApiProperty({ description: "Enable web push delivery.", example: false })
   push!: boolean;
+
+  @ApiProperty({
+    description: "Days before subscription expiry to send renewal reminders.",
+    example: [14, 7, 3, 1],
+    type: [Number],
+  })
+  subscriptionRenewalDays!: number[];
 }
 
 export class MarkNotificationReadResponseDto {

@@ -2,6 +2,10 @@ import { Injectable, HttpException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeGateway } from "../integrations/realtime.gateway";
 
+export function billingPeriodDays(billingPeriod: string): number {
+  return billingPeriod === "yearly" ? 365 : 30;
+}
+
 @Injectable()
 export class SubscriptionService {
   constructor(
@@ -105,24 +109,43 @@ export class SubscriptionService {
     };
   }
 
+  /**
+   * Deactivate all existing active main subscriptions for a pharmacy.
+   * Called before creating a new subscription on upgrade or renew.
+   */
+  private async deactivateExistingSubscriptions(pharmacyId: string) {
+    await this.prisma.subscriptions.updateMany({
+      where: { pharmacy_id: pharmacyId, is_active: true, subscription_type: "main" },
+      data: { is_active: false, updated_at: new Date() },
+    });
+  }
+
+  /**
+   * Upgrade to a different plan (or first-time subscribe).
+   * Deactivates the old subscription and creates a new one.
+   */
   async upgrade(pharmacyId: string, planId: string, paymentTransactionId?: string) {
     const plan = await this.loadPlan(planId);
     if (!plan) throw new HttpException("Plan not found", 404);
 
     const requiresPayment = Number(plan.price) > 0;
+    const periodDays = billingPeriodDays(plan.billing_period);
+
+    await this.deactivateExistingSubscriptions(pharmacyId);
+
     const subscription = await this.prisma.subscriptions.create({
       data: {
         pharmacy_id: pharmacyId,
         plan_id: plan.id,
+        billing_period: plan.billing_period,
         status: requiresPayment ? "pending_payment" : "active",
         is_active: !requiresPayment,
-        expires_at: requiresPayment ? null : new Date(Date.now() + 30 * 86400000),
+        expires_at: requiresPayment ? null : new Date(Date.now() + periodDays * 86400000),
         payment_method: paymentTransactionId ? "polar" : null,
         subscription_type: "main",
       },
     });
 
-    // Notify connected clients immediately when subscription activates
     if (!requiresPayment) {
       try { this.realtime.broadcastEntitlementsChanged(pharmacyId); } catch { /* non-fatal */ }
     }
@@ -132,6 +155,80 @@ export class SubscriptionService {
       subscription: requiresPayment
         ? { id: subscription.id, planId: plan.id, planName: plan.name, amount: Number(plan.price), requiresPayment: true, isActive: false, expiresAt: null, status: subscription.status }
         : { id: subscription.id, planId: plan.id, planName: plan.name, amount: 0, requiresPayment: false, isActive: true, expiresAt: subscription.expires_at, status: "active" },
+    };
+  }
+
+  /**
+   * Renew the current plan — extends the billing period without changing tier.
+   * If the plan has a Polar product, a checkout is required.
+   */
+  async renew(pharmacyId: string, planId: string, paymentTransactionId?: string) {
+    const plan = await this.loadPlan(planId);
+    if (!plan) throw new HttpException("Plan not found", 404);
+
+    const requiresPayment = Number(plan.price) > 0;
+    const periodDays = billingPeriodDays(plan.billing_period);
+
+    await this.deactivateExistingSubscriptions(pharmacyId);
+
+    const now = new Date();
+    const subscription = await this.prisma.subscriptions.create({
+      data: {
+        pharmacy_id: pharmacyId,
+        plan_id: plan.id,
+        billing_period: plan.billing_period,
+        status: requiresPayment ? "pending_payment" : "active",
+        is_active: !requiresPayment,
+        expires_at: requiresPayment ? null : new Date(now.getTime() + periodDays * 86400000),
+        payment_method: paymentTransactionId ? "polar" : null,
+        subscription_type: "main",
+        renewed_at: now,
+        billing_cycle_start: now,
+        current_period_start: now,
+        current_period_end: new Date(now.getTime() + periodDays * 86400000),
+      },
+    });
+
+    if (!requiresPayment) {
+      try { this.realtime.broadcastEntitlementsChanged(pharmacyId); } catch { /* non-fatal */ }
+    }
+
+    return {
+      success: true,
+      subscription: requiresPayment
+        ? { id: subscription.id, planId: plan.id, planName: plan.name, amount: Number(plan.price), requiresPayment: true, isActive: false, expiresAt: null, status: subscription.status }
+        : { id: subscription.id, planId: plan.id, planName: plan.name, amount: 0, requiresPayment: false, isActive: true, expiresAt: subscription.expires_at, status: "active" },
+    };
+  }
+
+  /**
+   * Cancel auto-renewal. The subscription remains active until expires_at.
+   */
+  async cancel(pharmacyId: string) {
+    const active = await this.prisma.subscriptions.findFirst({
+      where: { pharmacy_id: pharmacyId, is_active: true },
+      orderBy: { created_at: "desc" },
+    });
+    if (!active) throw new HttpException("No active subscription to cancel", 404);
+
+    const updated = await this.prisma.subscriptions.update({
+      where: { id: active.id },
+      data: {
+        cancelled_at: new Date(),
+        cancel_reason: "user_cancelled",
+        next_plan_id: null,
+        change_type: null,
+        change_scheduled_at: null,
+        pending_change_status: null,
+        updated_at: new Date(),
+      },
+    });
+
+    return {
+      success: true,
+      cancelled: true,
+      activeUntil: updated.expires_at,
+      subscriptionId: updated.id,
     };
   }
 

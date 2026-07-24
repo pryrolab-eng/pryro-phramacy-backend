@@ -1,4 +1,5 @@
 import { Module, NestModule, MiddlewareConsumer } from "@nestjs/common";
+import { ThrottlerModule } from "@nestjs/throttler";
 import { LoggingMiddleware } from "./common/logging.middleware";
 import { AppConfigModule } from "./config/config.module";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -46,6 +47,10 @@ import { MaintenanceModule } from "./maintenance/maintenance.module";
 
 @Module({
   imports: [
+    ThrottlerModule.forRoot([{
+      ttl: 60000,
+      limit: 100,
+    }]),
     AppConfigModule,
     PrismaModule,
     CommonModule,

@@ -393,15 +393,15 @@ export class AdminService {
   }
 
   async getSuperadminDashboard() {
-    const [pharmacies, users, sales] = await Promise.all([
+    const [pharmacies, users, revenueAgg] = await Promise.all([
       this.prisma.pharmacies.findMany({ select: { id: true, status: true, created_at: true } }),
       this.prisma.pharmacy_users.findMany({ select: { id: true, created_at: true } }),
-      this.prisma.sales.findMany({ select: { total_amount: true } }),
+      this.prisma.sales.aggregate({ _sum: { total_amount: true } }),
     ]);
 
     const totalPharmacies = pharmacies.length;
     const activePharmacies = pharmacies.filter((p) => p.status === "active").length;
-    const totalRevenue = sales.reduce((s, x) => s + Number(x.total_amount ?? 0), 0);
+    const totalRevenue = Number(revenueAgg._sum.total_amount ?? 0);
     const totalUsers = users.length;
 
     const now = new Date();
@@ -423,10 +423,15 @@ export class AdminService {
     const plans = await this.prisma.subscription_plans.findMany({ orderBy: { created_at: "desc" } });
     const planIds = plans.map((p) => p.id);
 
-    const [subCounts, featureRows] = await Promise.all([
+    const [subCounts, pharmacyPlanCounts, featureRows] = await Promise.all([
       this.prisma.subscriptions.groupBy({
         by: ["plan"],
         where: { is_active: true, status: "active" },
+        _count: { id: true },
+      }),
+      this.prisma.pharmacies.groupBy({
+        by: ["subscription_plan"],
+        where: { status: "active", subscription_plan: { not: null } },
         _count: { id: true },
       }),
       this.prisma.plan_features.findMany({
@@ -442,11 +447,20 @@ export class AdminService {
       keysByPlan.set(row.plan_id, list);
     }
 
-    const countByName = new Map<string, number>(subCounts.map((s) => [s.plan ?? "", s._count.id]));
+    // Merge counts from both subscriptions.plan and pharmacies.subscription_plan
+    const countByName = new Map<string, number>();
+    for (const s of subCounts) {
+      const key = (s.plan ?? "").toLowerCase();
+      countByName.set(key, (countByName.get(key) ?? 0) + s._count.id);
+    }
+    for (const p of pharmacyPlanCounts) {
+      const key = (p.subscription_plan ?? "").toLowerCase();
+      countByName.set(key, (countByName.get(key) ?? 0) + p._count.id);
+    }
 
     const enriched = plans.map((p) => ({
       ...p,
-      active_subscriber_count: countByName.get(p.name) ?? 0,
+      active_subscriber_count: countByName.get(p.name.toLowerCase()) ?? 0,
       feature_keys: keysByPlan.get(p.id) ?? [],
     }));
 
@@ -566,7 +580,7 @@ export class AdminService {
       this.prisma.payment_transactions.findMany({
         orderBy: { created_at: "desc" },
         take: 200,
-        include: { pharmacies: { select: { name: true } } },
+        include: { pharmacies: { select: { name: true, email: true, owner_id: true } } },
       }),
       this.prisma.subscriptions.findMany({
         orderBy: { created_at: "desc" },
@@ -577,41 +591,67 @@ export class AdminService {
 
     const paymentRows = payments.map((p) => ({
       id: p.id,
-      pharmacyId: p.pharmacy_id,
-      pharmacyName: p.pharmacies?.name ?? "Unknown",
+      pharmacy_id: p.pharmacy_id,
+      pharmacy_name: p.pharmacies?.name ?? "Unknown",
+      pharmacy_email: p.pharmacies?.email ?? null,
       amount: Number(p.amount ?? 0),
       currency: p.currency ?? "RWF",
       status: p.status,
-      method: p.payment_method ?? "",
-      createdAt: p.created_at?.toISOString() ?? null,
-      updatedAt: p.updated_at?.toISOString() ?? null,
+      payment_provider: p.payment_method ?? null,
+      customer_email: null as string | null,
+      customer_name: null as string | null,
+      catalog_plan_name: null as string | null,
+      created_at: p.created_at?.toISOString() ?? "",
+      completed_at: p.status === "completed" ? (p.updated_at?.toISOString() ?? null) : null,
     }));
 
     const subscriptionRows = subscriptions.map((s) => ({
-      id: s.id,
-      pharmacyId: s.pharmacy_id,
-      pharmacyName: s.pharmacies?.name ?? "Unknown",
-      planName: s.plan,
-      price: Number(s.amount ?? 0),
-      status: s.status,
-      period: s.billing_period ?? "",
-      isMain: s.subscription_type === "main",
-      createdAt: s.created_at?.toISOString() ?? null,
+      pharmacy_id: s.pharmacy_id,
+      pharmacy_name: s.pharmacies?.name ?? "Unknown",
+      pharmacy_email: null as string | null,
+      access_status: s.is_active && s.status === "active" ? "active" : s.status,
+      main_plan_name: s.plan,
+      main_billing_status: s.status,
+      pending_plan_name: null as string | null,
+      branch_addons_active: 0,
+      expires_at: s.expires_at?.toISOString() ?? null,
     }));
 
     const totalRevenue = payments
       .filter((p) => p.status === "completed")
       .reduce((s, p) => s + Number(p.amount ?? 0), 0);
 
+    const volumeByCurrency: Record<string, number> = {};
+    payments
+      .filter((p) => p.status === "completed")
+      .forEach((p) => {
+        const cur = p.currency ?? "RWF";
+        volumeByCurrency[cur] = (volumeByCurrency[cur] ?? 0) + Number(p.amount ?? 0);
+      });
+
+    const completedCount = payments.filter((p) => p.status === "completed").length;
+    const pendingCount = payments.filter((p) => p.status === "pending").length;
+    const failedCount = payments.filter((p) => p.status === "failed").length;
+
     return {
       payments: paymentRows,
-      subscriptions: subscriptionRows,
+      pharmacies: subscriptionRows,
+      reconciliation: [] as Array<{
+        id: string;
+        kind: "orphan_payment" | "pending_main" | "missing_plan_id";
+        pharmacy_id: string | null;
+        pharmacy_name: string | null;
+        detail: string;
+        payment_transaction_id?: string | null;
+        subscription_id?: string | null;
+        can_cancel: boolean;
+      }>,
       summary: {
-        totalRevenue,
-        totalPayments: payments.length,
-        completedPayments: payments.filter((p) => p.status === "completed").length,
-        pendingPayments: payments.filter((p) => p.status === "pending").length,
-        activeSubscriptions: subscriptions.filter((s) => s.is_active && s.status === "active").length,
+        completed_count: completedCount,
+        pending_count: pendingCount,
+        failed_count: failedCount,
+        volume_by_currency: volumeByCurrency,
+        platform_currency: "RWF",
       },
     };
   }
@@ -862,10 +902,12 @@ export class AdminService {
   }
 
   async createApiKey(body: { name: string; key: string; permissions?: string[]; createdBy: string }) {
+    const crypto = await import("crypto");
+    const hashedKey = `sha256:${crypto.createHash("sha256").update(body.key).digest("hex")}`;
     const apiKey = await this.prisma.api_keys.create({
       data: {
         name: body.name,
-        key_hash: body.key,
+        key_hash: hashedKey,
         key_prefix: body.key.substring(0, 8),
         created_by: body.createdBy,
         permissions: body.permissions ?? [],
@@ -878,7 +920,8 @@ export class AdminService {
     const data: Record<string, unknown> = {};
     if (body.name !== undefined) data.name = body.name;
     if (body.key) {
-      data.key_hash = body.key;
+      const crypto = await import("crypto");
+      data.key_hash = `sha256:${crypto.createHash("sha256").update(body.key).digest("hex")}`;
       data.key_prefix = body.key.substring(0, 8);
     }
     if (body.status !== undefined) data.is_active = body.status === "Active";

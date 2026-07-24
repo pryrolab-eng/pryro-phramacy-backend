@@ -8,6 +8,7 @@ export type NotificationPrefs = {
   expiry: boolean;
   salesReports: boolean;
   systemUpdates: boolean;
+  subscriptionRenewalDays: number[];
 };
 
 /** Notification row as selected from the database. */

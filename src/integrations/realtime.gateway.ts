@@ -76,26 +76,37 @@ export class RealtimeGateway
         return;
       }
 
+      const profile = await this.prisma.public_users.findUnique({
+        where: { id: user.id },
+        select: { is_platform_admin: true },
+      });
+      const isPlatformAdmin = profile?.is_platform_admin === true;
+
       const pharmacyId = await this.tenant.resolvePharmacyId(user.id);
-      if (!pharmacyId) {
+      if (!pharmacyId && !isPlatformAdmin) {
         this.logger.warn(`WS rejected ${client.id} — no pharmacy for user ${user.id}`);
         client.disconnect(true);
         return;
       }
 
-      const room = this.roomForPharmacy(pharmacyId);
-      await client.join(room);
-
-      this.sockets.set(client.id, { userId: user.id, pharmacyId });
-      const socketIds = this.pharmacySockets.get(pharmacyId) ?? new Set<string>();
-      socketIds.add(client.id);
-      this.pharmacySockets.set(pharmacyId, socketIds);
-
-      if (!this.pharmacyCursor.has(pharmacyId)) {
-        this.pharmacyCursor.set(pharmacyId, new Date());
+      if (pharmacyId) {
+        const room = this.roomForPharmacy(pharmacyId);
+        await client.join(room);
       }
 
-      this.ensurePollLoop();
+      this.sockets.set(client.id, { userId: user.id, pharmacyId: pharmacyId ?? "" });
+
+      if (pharmacyId) {
+        const socketIds = this.pharmacySockets.get(pharmacyId) ?? new Set<string>();
+        socketIds.add(client.id);
+        this.pharmacySockets.set(pharmacyId, socketIds);
+
+        if (!this.pharmacyCursor.has(pharmacyId)) {
+          this.pharmacyCursor.set(pharmacyId, new Date());
+        }
+
+        this.ensurePollLoop();
+      }
       this.logger.log(`WS connected: ${client.id} → userId=${user.id} pharmacyId=${pharmacyId}`);
       client.emit("realtime:connected", {
         mode: "websocket",

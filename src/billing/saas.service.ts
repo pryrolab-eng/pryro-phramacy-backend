@@ -67,7 +67,7 @@ export class SaaSService {
             user_id: null, // will go to pharmacy feed
             payload: {
               title: `Plan price ${direction}`,
-              message: `The ${oldPlan.name} plan price has ${direction} by ${diff.toLocaleString()} RWF. Your current subscription is locked at ${oldPrice.toLocaleString()} RWF until renewal. At your next renewal, the new price of ${newPrice.toLocaleString()} RWF will apply.`,
+              message: `The ${oldPlan.name} plan price has ${direction} by ${diff.toLocaleString()} ${(oldPlan as any).currency ?? "RWF"}. Your current subscription is locked at ${oldPrice.toLocaleString()} ${(oldPlan as any).currency ?? "RWF"} until renewal. At your next renewal, the new price of ${newPrice.toLocaleString()} ${(oldPlan as any).currency ?? "RWF"} will apply.`,
               type: direction === "increased" ? "warning" : "info",
               actionUrl: "/pharmacy/billing",
               oldPrice,
@@ -99,7 +99,7 @@ export class SaaSService {
         plan_id: input.plan_id,
         branch_id: input.branch_id ?? null,
         amount: lockedPrice,           // ← locked price snapshot
-        currency: "RWF",
+        currency: (plan as any).currency ?? "RWF",
         status: lockedPrice > 0 ? "pending_payment" : "active",
         is_active: lockedPrice <= 0,
         subscription_type: input.subscription_type,

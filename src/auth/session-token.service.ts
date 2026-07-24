@@ -73,6 +73,21 @@ export class SessionTokenService {
     return { accessJwt, refreshJwt, sessionId: session.id };
   }
 
+  async verifyRefreshToken(token: string): Promise<SessionJwtPayload | null> {
+    try {
+      const { payload } = await jwtVerify(token, this.getSecret());
+      const sub = payload.sub;
+      const sid = payload.sid;
+      const typ = payload.typ;
+      if (!sub || typeof sub !== "string" || !sid || typeof sid !== "string" || typ !== "refresh") {
+        return null;
+      }
+      return { sub, sid };
+    } catch {
+      return null;
+    }
+  }
+
   async revokeSession(sessionId: string): Promise<void> {
     await this.prisma.app_sessions.delete({ where: { id: sessionId } }).catch(() => {});
   }

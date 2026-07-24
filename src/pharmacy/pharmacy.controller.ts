@@ -463,7 +463,7 @@ export class PharmacyController {
       );
     } catch (error) {
       console.error("GET /api/pharmacy/category-sales", error);
-      return [];
+      throw new HttpException({ error: "Failed to fetch category sales" }, 500);
     }
   }
 
@@ -487,7 +487,7 @@ export class PharmacyController {
       );
     } catch (error) {
       console.error("GET /api/pharmacy/sales-chart", error);
-      return [];
+      throw new HttpException({ error: "Failed to fetch sales chart" }, 500);
     }
   }
 
@@ -506,7 +506,7 @@ export class PharmacyController {
       );
     } catch (error) {
       console.error("GET /api/pharmacy/inventory-chart", error);
-      return [];
+      throw new HttpException({ error: "Failed to fetch inventory chart" }, 500);
     }
   }
 
@@ -530,7 +530,7 @@ export class PharmacyController {
       );
     } catch (error) {
       console.error("GET /api/pharmacy/weekly-sales", error);
-      return [];
+      throw new HttpException({ error: "Failed to fetch weekly sales" }, 500);
     }
   }
 

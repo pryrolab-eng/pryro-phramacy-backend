@@ -12,7 +12,26 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { AuthUser } from "../auth/auth.types";
 
 const SYSTEM_PROMPT_PHARMACY = `You are a pharmacy AI assistant. Help with inventory checks, sales queries, patient lookups, and drug safety. Be concise and accurate. Use available tools to retrieve live data.`;
-const SYSTEM_PROMPT_ADMIN = `You are a platform admin AI assistant. Help with pharmacy management, subscription oversight, and system analytics. Use available tools to retrieve live data.`;
+const SYSTEM_PROMPT_ADMIN = `You are a platform admin AI assistant for Pryrox pharmacy management. Help with pharmacy management, subscription oversight, and system analytics. Use available tools to retrieve live data. Plans can be monthly or yearly billing — the tool results include billing_period, price, and yearly_price. Always mention the currency when discussing revenue or payments.
+
+INTERACTIVE USER FORM QUESTIONS (A2UI):
+- CRITICAL: Whenever you need to ask the user questions, gather design preferences (e.g. brand colors, typography/fonts, tone, layout options, badges, image preferences), or collect configuration parameters, DO NOT TYPE BULLET POINT QUESTIONS IN PLAIN TEXT.
+- YOU MUST CALL THE \`ask_user\` TOOL! The \`ask_user\` tool renders a rich interactive form (with selectable radio option buttons, text inputs, and submit buttons) directly in the UI so the user can easily select or type their choices.
+
+EMAIL TEMPLATE MANAGEMENT:
+- You can list, view, and update platform email templates using your tools.
+- When asked to update or redesign an email template, FIRST call \`ask_user\` with interactive choice fields for:
+  1. \`brand_color\` (type: "choice", options: ["Primary Blue (#003459)", "Emerald Green (#059669)", "Dark Slate (#0f172a)", "Custom HEX"])
+  2. \`font_style\` (type: "choice", options: ["Modern Sans (Inter/Roboto)", "Classic Serif (Georgia)", "System Default"])
+  3. \`layout_style\` (type: "choice", options: ["Centered Card with Header", "Full Width Banner", "Minimal Clean Text"])
+  4. \`tone\` (type: "choice", options: ["Formal & Official", "Professional & Friendly", "Urgent Alert"])
+- After the user submits their choices via the \`ask_user\` form, generate a professional, responsive HTML email template with inline CSS (email-client safe) and save it using \`update_email_template\`.
+- Preserve template variables like {{variableName}} — they are replaced at send time.
+
+EMAIL COMPOSITION & SENDING:
+- You are a skilled email writer. When asked to compose or send an email, if key details are missing, call \`ask_user\` to collect them.
+- ALWAYS use the \`draft_email\` tool first so the admin can preview the email and click the interactive Send button. Never call send_email directly.
+- Write emails that are professional, clear, and well-structured with proper HTML formatting.`;
 
 @ApiTags("AI")
 @ApiCookieAuth("pryrox_session")
@@ -129,7 +148,7 @@ export class AiChatController {
         for (const tc of toolCallsArray) {
           try {
             const args = JSON.parse(tc.arguments);
-            const result = await this.tools.executeTool(tc.name, args, { pharmacyId: pharmacyId ?? undefined, scope: body.scope });
+            const result = await this.tools.executeTool(tc.name, args, { pharmacyId: pharmacyId ?? undefined, scope: body.scope, userId: user.id });
             executedToolCalls.push({ id: tc.id, name: tc.name, args, result });
           } catch (err) {
             executedToolCalls.push({ id: tc.id, name: tc.name, error: String(err) });
@@ -137,13 +156,18 @@ export class AiChatController {
         }
 
         if (executedToolCalls.length > 0) {
+          const toolResultsText = executedToolCalls.map((tc) => {
+            const name = tc.name;
+            const result = JSON.stringify(tc.result ?? tc.error ?? "No result");
+            return `[Tool ${name} result]: ${result}`;
+          }).join("\n\n");
+
           const followUpMessages = [
             { role: "system", content: systemPrompt },
             ...body.messages.map((m) => ({ role: m.role, content: m.content })),
-            { role: "assistant", content: fullContent || null, tool_calls: toolCallsArray.map((tc) => ({ id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments } })) },
-            ...executedToolCalls.map((tc) => ({ role: "tool" as const, tool_call_id: tc.id, content: JSON.stringify(tc.result ?? tc.error ?? tc) })),
+            { role: "user", content: `I asked you to use these tools. Here are the results:\n\n${toolResultsText}\n\nPlease summarize these results for the user in a clear, concise way.` },
           ];
-          const followUp = await client.chat.completions.create({ model: this.ai.model, messages: followUpMessages as any, tools: toolDefs, ...this.ai.defaults, stream: true, stream_options: { include_usage: true } });
+          const followUp = await client.chat.completions.create({ model: this.ai.model, messages: followUpMessages as any, ...this.ai.defaults, stream: true, stream_options: { include_usage: true } });
           let followUpContent = "";
           for await (const chunk of followUp) {
             if (chunk.usage) tokenUsage = this.ai.addTokenUsage(tokenUsage, this.ai.extractTokenUsage(chunk));
@@ -163,10 +187,29 @@ export class AiChatController {
 
       send({ type: "done", threadId: activeThreadId, messageId: savedMessage.id, content: fullContent, toolCalls: executedToolCalls.length > 0 ? executedToolCalls : null });
     } catch (err) {
+      console.error("[AI Chat] Error:", err);
       this.ai.recordTrace({ traceId, tenantId: null, feature: "ai_chat", inputTokens: 0, outputTokens: 0, latencyMs: Date.now() - startTime, success: false, fallback: false, error: String(err) });
       send({ type: "error", error: "Stream failed" });
     } finally {
       res.end();
+    }
+  }
+
+  @Post("send-email")
+  @UseGuards(SessionGuard)
+  @ApiOperation({ summary: "Send a drafted email (triggered by chat Send button)" })
+  async sendEmail(@CurrentUser() user: AuthUser, @Body() body: { to: string; subject: string; html: string; text?: string }, @Res() res: Response) {
+    try {
+      const adminRow = await this.prisma.public_users.findUnique({ where: { id: user.id }, select: { is_platform_admin: true } });
+      if (!adminRow?.is_platform_admin) {
+        res.status(403).json({ error: "Forbidden — platform admin only" });
+        return;
+      }
+      const result = await this.tools.sendEmail(body);
+      res.json(result);
+    } catch (err) {
+      console.error("[AI Send Email] Error:", err);
+      res.status(500).json({ success: false, error: "Failed to send email" });
     }
   }
 }

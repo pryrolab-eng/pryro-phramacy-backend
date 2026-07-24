@@ -147,7 +147,7 @@ export class InsuranceController {
       }];
     } catch (error) {
       console.error("GET /api/insurance/analytics/monthly", error);
-      return [];
+      throw new HttpException({ error: "Failed to fetch insurance analytics" }, 500);
     }
   }
 
@@ -175,7 +175,7 @@ export class InsuranceController {
       );
     } catch (error) {
       console.error("GET /api/insurance", error);
-      return [];
+      throw new HttpException({ error: "Failed to fetch insurance providers" }, 500);
     }
   }
 

@@ -57,70 +57,87 @@ export class InventoryService {
     };
   }
 
-  async rows(pharmacyId: string, branchId?: string | null, medicationScoped = true) {
+  async rows(pharmacyId: string, branchId?: string | null, medicationScoped = true, page = 1, limit = 50) {
     const where = {
       pharmacy_id: pharmacyId,
       ...(branchId ? { branch_id: branchId } : {}),
       ...(medicationScoped ? { medications: { pharmacy_id: pharmacyId } } : {}),
     };
+    const skip = (page - 1) * limit;
     try {
-      const rows = await this.prisma.inventory.findMany({
-        where,
-        select: {
-          id: true,
-          pharmacy_id: true,
-          branch_id: true,
-          medication_id: true,
-          stock_location_id: true,
-          batch_number: true,
-          quantity_in_stock: true,
-          selling_price: true,
-          minimum_stock_level: true,
-          expiry_date: true,
-          unit_cost: true,
-          medications: { select: medicationSelect },
-          stock_locations: { select: { id: true, name: true } },
-        },
-      });
-      return rows.map((row) => this.mapRow(row));
+      const [rows, total] = await Promise.all([
+        this.prisma.inventory.findMany({
+          where,
+          select: {
+            id: true,
+            pharmacy_id: true,
+            branch_id: true,
+            medication_id: true,
+            stock_location_id: true,
+            batch_number: true,
+            quantity_in_stock: true,
+            selling_price: true,
+            minimum_stock_level: true,
+            expiry_date: true,
+            unit_cost: true,
+            medications: { select: medicationSelect },
+            stock_locations: { select: { id: true, name: true } },
+          },
+          skip,
+          take: limit,
+        }),
+        this.prisma.inventory.count({ where }),
+      ]);
+      return { rows: rows.map((row) => this.mapRow(row)), total };
     } catch (error) {
       if (!isMissingStockLocation(error)) throw error;
-      const rows = await this.prisma.inventory.findMany({
-        where,
-        select: {
-          id: true,
-          pharmacy_id: true,
-          branch_id: true,
-          medication_id: true,
-          batch_number: true,
-          quantity_in_stock: true,
-          selling_price: true,
-          minimum_stock_level: true,
-          expiry_date: true,
-          unit_cost: true,
-          medications: { select: medicationSelect },
-        },
-      });
-      return rows.map((row) => this.mapRow(row));
+      const [rows, total] = await Promise.all([
+        this.prisma.inventory.findMany({
+          where,
+          select: {
+            id: true,
+            pharmacy_id: true,
+            branch_id: true,
+            medication_id: true,
+            batch_number: true,
+            quantity_in_stock: true,
+            selling_price: true,
+            minimum_stock_level: true,
+            expiry_date: true,
+            unit_cost: true,
+            medications: { select: medicationSelect },
+          },
+          skip,
+          take: limit,
+        }),
+        this.prisma.inventory.count({ where }),
+      ]);
+      return { rows: rows.map((row) => this.mapRow(row)), total };
     }
   }
 
-  async list(pharmacyId: string, branchId?: string | null) {
-    return (await this.rows(pharmacyId, branchId)).map((row) => ({
-      id: row.id,
-      medicationId: row.medication_id ?? "",
-      name: row.medications?.name ?? "Unknown",
-      category: row.medications?.category ?? "general",
-      stock: row.quantity_in_stock,
-      minStock: row.minimum_stock_level,
-      price: row.selling_price,
-      expiryDate: row.expiry_date?.toISOString().slice(0, 10) ?? null,
-      batchNumber: row.batch_number,
-      stockLocationId: row.stock_location_id,
-      stockLocationName: row.stock_locations?.name ?? null,
-      medications: row.medications,
-      pharmacy_id: row.pharmacy_id,
-    }));
+  async list(pharmacyId: string, branchId?: string | null, page = 1, limit = 50) {
+    const { rows, total } = await this.rows(pharmacyId, branchId, true, page, limit);
+    return {
+      rows: rows.map((row) => ({
+        id: row.id,
+        medicationId: row.medication_id ?? "",
+        name: row.medications?.name ?? "Unknown",
+        category: row.medications?.category ?? "general",
+        stock: row.quantity_in_stock,
+        minStock: row.minimum_stock_level,
+        price: row.selling_price,
+        expiryDate: row.expiry_date?.toISOString().slice(0, 10) ?? null,
+        batchNumber: row.batch_number,
+        stockLocationId: row.stock_location_id,
+        stockLocationName: row.stock_locations?.name ?? null,
+        medications: row.medications,
+        pharmacy_id: row.pharmacy_id,
+      })),
+      total,
+      page,
+      limit,
+    };
   }
 
   private alertItem(row: InventoryRow) {
@@ -136,7 +153,7 @@ export class InventoryService {
   }
 
   async stockAlerts(pharmacyId: string, branchId?: string | null) {
-    const rows = await this.rows(pharmacyId, branchId, false);
+    const { rows } = await this.rows(pharmacyId, branchId, false);
     const thirtyDays = new Date();
     thirtyDays.setDate(thirtyDays.getDate() + 30);
     return {
@@ -151,7 +168,7 @@ export class InventoryService {
   }
 
   async expiryAlerts(pharmacyId: string, withinDays = 60) {
-    const rows = await this.rows(pharmacyId, null, false);
+    const { rows } = await this.rows(pharmacyId, null, false);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const cutoff = new Date(today);
@@ -221,7 +238,7 @@ export class InventoryService {
       unit_cost: input.unitCost ?? 0,
       selling_price: input.sellingPrice ?? 0,
       minimum_stock_level: input.minimumStockLevel ?? 0,
-      expiry_date: new Date(input.expiryDate ?? "2025-12-31"),
+      expiry_date: new Date(input.expiryDate ?? "2030-12-31"),
       ...(stockLocationId ? { stock_location_id: stockLocationId } : {}),
     };
     try {
@@ -367,30 +384,53 @@ export class InventoryService {
       unitCost: parseFloat(String(body.unit_cost ?? 0)) || 0,
       sellingPrice: parseFloat(String(body.selling_price ?? 0)) || 0,
       minimumStockLevel: parseInt(String(body.minimum_stock_level ?? 0), 10) || 0,
-      expiryDate: String(body.expiry_date || "2025-12-31"),
+      expiryDate: String(body.expiry_date || "2030-12-31"),
       stockLocation: stockLocationId,
     });
     return { success: true as const, medicationId: medicationId!, inventory };
   }
 
-  async adjust(id: string, type: "increase" | "decrease", quantity: number) {
-    const row = await this.prisma.inventory.findUnique({
+  async adjust(id: string, type: "increase" | "decrease", quantity: number, pharmacyId?: string) {
+    if (type === "decrease") {
+      const where = pharmacyId
+        ? { id, pharmacy_id: pharmacyId, quantity_in_stock: { gte: quantity } }
+        : { id, quantity_in_stock: { gte: quantity } };
+      const result = await this.prisma.inventory.updateMany({
+        where,
+        data: { quantity_in_stock: { decrement: quantity } },
+      });
+      if (result.count === 0) {
+        const exists = await this.prisma.inventory.findFirst({
+          where: pharmacyId ? { id, pharmacy_id: pharmacyId } : { id },
+          select: { quantity_in_stock: true },
+        });
+        if (!exists) throw new Error("Product not found");
+        throw new Error(`Insufficient stock. Available: ${exists.quantity_in_stock ?? 0}`);
+      }
+      const updated = await this.prisma.inventory.findUnique({
+        where: { id },
+        select: { quantity_in_stock: true },
+      });
+      return updated?.quantity_in_stock ?? 0;
+    }
+
+    const where = pharmacyId ? { id, pharmacy_id: pharmacyId } : { id };
+    const result = await this.prisma.inventory.updateMany({
+      where,
+      data: { quantity_in_stock: { increment: quantity } },
+    });
+    if (result.count === 0) throw new Error("Product not found");
+    const updated = await this.prisma.inventory.findUnique({
       where: { id },
       select: { quantity_in_stock: true },
     });
-    if (!row) throw new Error("Product not found");
-    const current = row.quantity_in_stock ?? 0;
-    const newStock = type === "increase" ? current + quantity : Math.max(0, current - quantity);
-    await this.prisma.inventory.update({
-      where: { id },
-      data: { quantity_in_stock: newStock },
-    });
-    return newStock;
+    return updated?.quantity_in_stock ?? 0;
   }
 
-  async updateInventory(id: string, body: Record<string, unknown>) {
-    await this.prisma.inventory.update({
-      where: { id },
+  async updateInventory(id: string, body: Record<string, unknown>, pharmacyId?: string) {
+    const where = pharmacyId ? { id, pharmacy_id: pharmacyId } : { id };
+    const result = await this.prisma.inventory.updateMany({
+      where,
       data: {
         ...(body.quantity !== undefined ? { quantity_in_stock: Number(body.quantity) } : {}),
         ...(body.selling_price !== undefined ? { selling_price: Number(body.selling_price) } : {}),
@@ -399,14 +439,22 @@ export class InventoryService {
           : {}),
       },
     });
+    if (result.count === 0) throw new Error("Product not found");
   }
 
-  async deleteInventory(id: string) {
-    await this.prisma.inventory.delete({ where: { id } });
+  async deleteInventory(id: string, pharmacyId?: string) {
+    if (pharmacyId) {
+      const result = await this.prisma.inventory.deleteMany({
+        where: { id, pharmacy_id: pharmacyId },
+      });
+      if (result.count === 0) throw new Error("Product not found");
+    } else {
+      await this.prisma.inventory.delete({ where: { id } });
+    }
   }
 
   async analytics(pharmacyId: string) {
-    const items = await this.list(pharmacyId);
+    const { rows: items } = await this.list(pharmacyId, null, 1, 10000);
     const stats: Record<string, { stock: number; value: number }> = {};
     let currentValue = 0;
     for (const item of items) {
@@ -485,20 +533,21 @@ export class InventoryService {
     };
   }
 
-  async receivePurchase(id: string, quantity: number, costPrice?: number) {
-    const newStock = await this.adjust(id, "increase", quantity);
+  async receivePurchase(id: string, quantity: number, costPrice?: number, pharmacyId?: string) {
+    const newStock = await this.adjust(id, "increase", quantity, pharmacyId);
     if (costPrice != null) {
-      await this.prisma.inventory.update({
-        where: { id },
+      const where = pharmacyId ? { id, pharmacy_id: pharmacyId } : { id };
+      await this.prisma.inventory.updateMany({
+        where,
         data: { unit_cost: costPrice },
       });
     }
     return newStock;
   }
 
-  async suppliers() {
+  async suppliers(pharmacyId: string) {
     return this.prisma.suppliers.findMany({
-      where: { is_active: true },
+      where: { pharmacy_id: pharmacyId, is_active: true },
       orderBy: { created_at: "desc" },
     });
   }

@@ -6,7 +6,7 @@ function resolveDatasourceUrl(rawUrl: string, nodeEnv: string): string {
   try {
     const url = new URL(rawUrl);
     if (!url.searchParams.has("connection_limit")) {
-      url.searchParams.set("connection_limit", nodeEnv === "development" ? "10" : "10");
+      url.searchParams.set("connection_limit", nodeEnv === "development" ? "5" : "10");
     }
     if (!url.searchParams.has("pool_timeout")) {
       url.searchParams.set("pool_timeout", "20");

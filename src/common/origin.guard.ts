@@ -20,14 +20,21 @@ export class OriginGuard implements CanActivate {
     }
 
     const origin = request.headers.origin?.trim();
-    if (!origin) {
-      return true;
+    const referer = request.headers.referer?.trim();
+
+    // Browser requests always send either Origin (cross-origin) or Referer (same-origin).
+    // If neither is present, the request is likely from a non-browser tool exploiting cookies.
+    if (!origin && !referer) {
+      throw new ForbiddenException({ error: "Missing origin and referer headers" });
     }
 
-    const allowed = new Set(this.config.corsOrigins);
-    if (!allowed.has(origin)) {
-      throw new ForbiddenException({ error: "Invalid origin" });
+    if (origin) {
+      const allowed = new Set(this.config.corsOrigins);
+      if (!allowed.has(origin)) {
+        throw new ForbiddenException({ error: "Invalid origin" });
+      }
     }
+
     return true;
   }
 }
