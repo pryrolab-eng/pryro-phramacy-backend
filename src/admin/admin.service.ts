@@ -573,6 +573,86 @@ export class AdminService {
     return { success: true };
   }
 
+  /**
+   * Force-link or create a Polar product for the given plan.
+   * If `polarProductId` is supplied, it is saved directly (admin picked from dropdown).
+   * Otherwise, the plan data is synced to Polar to create/update the product, and
+   * the returned product ID is saved to `polar_product_id` on the plan row.
+   */
+  async syncPlanToPolar(planId: string, polarProductId?: string) {
+    const plan = await this.prisma.subscription_plans.findUnique({ where: { id: planId } });
+    if (!plan) throw { status: 404, error: "Plan not found" };
+
+    let finalProductId = polarProductId?.trim() || null;
+    let action: "linked" | "created" | "updated" | "recreated" | "skipped" = "linked";
+
+    if (!finalProductId) {
+      // Dynamically import to avoid circular dependency — sync-plan lives in lib/polar on frontend;
+      // on backend we call Polar SDK directly via PolarService.createCheckout flow.
+      // Use the same logic: call Polar products API.
+      const { Polar } = await import("@polar-sh/sdk");
+      const token = process.env.POLAR_ACCESS_TOKEN?.trim();
+      if (!token) throw { status: 503, error: "Polar is not configured (POLAR_ACCESS_TOKEN missing)" };
+      const polar = new Polar({ accessToken: token, server: process.env.POLAR_SERVER === "production" ? "production" : "sandbox" });
+
+      const priceRwf = Number(plan.price ?? 0);
+      if (priceRwf <= 0) {
+        return { success: true, polarProductId: null, action: "skipped", message: "Free plans do not need a Polar product." };
+      }
+
+      const existingId = (plan.polar_product_id ?? "").trim() || null;
+      let needsCreate = true;
+
+      if (existingId) {
+        try {
+          const existing = await polar.products.get({ id: existingId });
+          const archived = (existing as { isArchived?: boolean }).isArchived === true;
+          if (!archived) {
+            // Update metadata/name only
+            await polar.products.update({ id: existingId, productUpdate: { name: plan.name } });
+            finalProductId = existingId;
+            action = "updated";
+            needsCreate = false;
+          }
+        } catch { /* archived or missing — fall through to create */ }
+      }
+
+      if (needsCreate) {
+        const rwfPerUsd = Number(process.env.POLAR_RWF_PER_USD ?? "1300") || 1300;
+        const currency = (process.env.POLAR_CHECKOUT_CURRENCY ?? "usd").toLowerCase();
+        const priceAmount = currency === "rwf"
+          ? Math.max(0, Math.round(priceRwf))
+          : Math.max(0, Math.round((priceRwf / rwfPerUsd) * 100));
+        const recurringInterval = plan.billing_period === "yearly" ? "year" : "month";
+
+        const created = await polar.products.create({
+          name: plan.name,
+          recurringInterval,
+          recurringIntervalCount: 1,
+          metadata: { pryrox_plan_id: plan.id, pryrox_plan_name: plan.name },
+          prices: [{ amountType: "fixed", priceCurrency: currency as any, priceAmount }],
+        });
+        finalProductId = created.id ?? null;
+        action = existingId ? "recreated" : "created";
+      }
+    }
+
+    if (finalProductId) {
+      await this.prisma.subscription_plans.update({
+        where: { id: planId },
+        data: { polar_product_id: finalProductId, updated_at: new Date() },
+      });
+    }
+
+    return {
+      success: true,
+      polarProductId: finalProductId,
+      action,
+      planId,
+      planName: plan.name,
+    };
+  }
+
   // --- Billing ---
 
   async getBilling() {

@@ -11,5 +11,6 @@ import { IntegrationsModule } from "../integrations/integrations.module";
   imports: [IntegrationsModule],
   controllers: [SubscriptionsController, PolarController, SaaSController],
   providers: [SubscriptionService, PolarService, SaaSService],
+  exports: [PolarService],
 })
 export class BillingModule {}

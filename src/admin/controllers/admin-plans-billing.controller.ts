@@ -16,6 +16,7 @@ import { AdminService } from "../admin.service";
 import {
   AdminCreatePlanDto as CreatePlanDto, UpdatePlanDto, CancelPendingBillingDto,
 } from "../dto";
+import { PolarService } from "../../billing/polar.service";
 
 @ApiTags("Admin Plans & Billing")
 @ApiCookieAuth("pryrox_session")
@@ -25,6 +26,7 @@ export class AdminPlansBillingController {
   constructor(
     private readonly admin: AdminService,
     private readonly audit: AuditService,
+    private readonly polar: PolarService,
   ) {}
 
   // --- Plans ---
@@ -80,6 +82,40 @@ export class AdminPlansBillingController {
       return await this.admin.deletePlan(id);
     } catch {
       throw new HttpException({ error: "Failed to delete plan" }, 500);
+    }
+  }
+
+  // --- Polar integration ---
+
+  @Get("polar/products")
+  @ApiOperation({ summary: "List all products in the connected Polar account" })
+  async listPolarProducts() {
+    try {
+      return await this.polar.listProducts();
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      const msg = error instanceof Error ? error.message : "Failed to list Polar products";
+      throw new HttpException({ error: msg }, 500);
+    }
+  }
+
+  @Post("polar/sync-plan/:id")
+  @ApiOperation({ summary: "Force-sync a subscription plan to Polar and save the polar_product_id" })
+  @ApiParam({ name: "id", description: "Subscription plan ID" })
+  async syncPlanToPolar(
+    @Param("id") id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() body: { polarProductId?: string },
+    @Req() req: Request,
+  ) {
+    try {
+      const result = await this.admin.syncPlanToPolar(id, body.polarProductId);
+      await this.auditWrite(user.id, null, "UPDATE", "subscription_plans", id, null, { polar_sync: true, polarProductId: result.polarProductId }, req);
+      return result;
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      const msg = error instanceof Error ? error.message : "Polar sync failed";
+      throw new HttpException({ error: msg }, 500);
     }
   }
 

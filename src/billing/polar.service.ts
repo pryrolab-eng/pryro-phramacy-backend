@@ -32,6 +32,23 @@ export class PolarService {
     return { enabled: isPolarConfigured(), server: getPolarServer() };
   }
 
+  async listProducts(): Promise<{ products: Array<{ id: string; name: string; isArchived: boolean; description?: string }> }> {
+    if (!isPolarConfigured()) {
+      return { products: [] };
+    }
+    const polar = getPolarClient();
+    const res = await polar.products.list({ limit: 100 });
+    const items = res.result?.items ?? [];
+    return {
+      products: items.map((p) => ({
+        id: p.id,
+        name: p.name ?? "(unnamed)",
+        isArchived: (p as { isArchived?: boolean }).isArchived === true,
+        description: (p as { description?: string }).description ?? undefined,
+      })),
+    };
+  }
+
   async createCheckout(input: {
     pharmacyId: string; userId: string; planId: string; subscriptionId: string;
     returnContext?: string; customerEmail: string; customerName: string; customerPhone?: string;

@@ -9,7 +9,7 @@ import { HttpExceptionFilter } from "./common/http-exception.filter";
 import { OriginGuard } from "./common/origin.guard";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   const config = app.get(AppConfigService);
 

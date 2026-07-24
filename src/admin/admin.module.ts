@@ -7,8 +7,10 @@ import { AdminPlatformController } from "./controllers/admin-platform.controller
 import { AdminContentController } from "./controllers/admin-content.controller";
 import { SuperAdminController } from "./controllers/superadmin.controller";
 import { RequirePlatformAdminGuard } from "./guards/require-platform-admin.guard";
+import { BillingModule } from "../billing/billing.module";
 
 @Module({
+  imports: [BillingModule],
   controllers: [
     AdminPharmaciesController,
     AdminPlansBillingController,
