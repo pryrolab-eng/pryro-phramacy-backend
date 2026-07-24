@@ -600,6 +600,13 @@ export class AdminService {
         return { success: true, polarProductId: null, action: "skipped", message: "Free plans do not need a Polar product." };
       }
 
+      const rwfPerUsd = Number(process.env.POLAR_RWF_PER_USD ?? "1300") || 1300;
+      const currency = (process.env.POLAR_CHECKOUT_CURRENCY ?? "usd").toLowerCase();
+      const priceAmount = currency === "rwf"
+        ? Math.max(0, Math.round(priceRwf))
+        : Math.max(0, Math.round((priceRwf / rwfPerUsd) * 100));
+      const recurringInterval = plan.billing_period === "yearly" ? "year" : "month";
+
       const existingId = (plan.polar_product_id ?? "").trim() || null;
       let needsCreate = true;
 
@@ -607,24 +614,23 @@ export class AdminService {
         try {
           const existing = await polar.products.get({ id: existingId });
           const archived = (existing as { isArchived?: boolean }).isArchived === true;
-          if (!archived) {
-            // Update metadata/name only
+          const existingPrices = (existing as { prices?: Array<{ priceAmount?: number }> }).prices ?? [];
+          const currentPolarPrice = existingPrices[0]?.priceAmount ?? 0;
+
+          if (!archived && currentPolarPrice === priceAmount) {
             await polar.products.update({ id: existingId, productUpdate: { name: plan.name } });
             finalProductId = existingId;
             action = "updated";
             needsCreate = false;
+          } else {
+            try {
+              await polar.products.update({ id: existingId, productUpdate: { isArchived: true } as any });
+            } catch {}
           }
         } catch { /* archived or missing — fall through to create */ }
       }
 
       if (needsCreate) {
-        const rwfPerUsd = Number(process.env.POLAR_RWF_PER_USD ?? "1300") || 1300;
-        const currency = (process.env.POLAR_CHECKOUT_CURRENCY ?? "usd").toLowerCase();
-        const priceAmount = currency === "rwf"
-          ? Math.max(0, Math.round(priceRwf))
-          : Math.max(0, Math.round((priceRwf / rwfPerUsd) * 100));
-        const recurringInterval = plan.billing_period === "yearly" ? "year" : "month";
-
         const created = await polar.products.create({
           name: plan.name,
           recurringInterval,

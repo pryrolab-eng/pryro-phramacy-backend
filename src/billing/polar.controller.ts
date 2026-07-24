@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpException, Post, Query, RawBodyRequest, Req, UseGuards, Headers } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, HttpException, Post, Query, RawBodyRequest, Req, UseGuards, UsePipes, Headers } from "@nestjs/common";
 import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import type { Request } from "express";
 import type { AuthUser } from "../auth/auth.types";
@@ -70,6 +70,8 @@ export class PolarController {
   }
 
   @Post("polar/webhook")
+  @HttpCode(200)
+  @UsePipes()
   @ApiOperation({ summary: "Polar webhook receiver" })
   async webhook(@Req() req: RawBodyRequest<Request>) {
     const body = req.rawBody?.toString("utf-8") ?? JSON.stringify(req.body);
@@ -80,3 +82,4 @@ export class PolarController {
     return await this.service.handleWebhook(body, headers);
   }
 }
+

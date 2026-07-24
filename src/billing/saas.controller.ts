@@ -198,12 +198,15 @@ export class SaaSController {
   @UseGuards(SessionGuard)
   @ApiCookieAuth("pryrox_session")
   @ApiOperation({ summary: "Generate a monthly invoice" })
-  async generateInvoice(@CurrentUser() user: AuthUser, @Body() body: GenerateInvoiceDto) {
+  async generateInvoice(@CurrentUser() user: AuthUser, @Body() body: any) {
     try {
       const pharmacyId = await this.tenant.requirePharmacyId(user.id);
-      const invoice = await this.service.generateMonthlyInvoice(pharmacyId, body.month);
+      const now = new Date();
+      const month = body?.month || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      const invoice = await this.service.generateMonthlyInvoice(pharmacyId, month);
       return { invoice };
     } catch (error) {
+      console.error("generateInvoice error:", error);
       throw new HttpException({ error: "Failed to generate invoice" }, 500);
     }
   }
